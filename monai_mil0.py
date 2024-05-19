@@ -36,14 +36,6 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-def set_seed(seed):
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-# Set a reproducible seed
-set_seed(42)
 
 def train_epoch(model, loader, optimizer, scaler, epoch, args):
     """One train epoch over the dataset"""
@@ -408,7 +400,6 @@ def main_worker(gpu, args):
 
     scaler = GradScaler(enabled=args.amp)
 
-    best_acc, best_epoch = 0, 0
     for epoch in tqdm(range(start_epoch, n_epochs)):
         if args.distributed:
             train_sampler.set_epoch(epoch)
@@ -455,8 +446,6 @@ def main_worker(gpu, args):
                     print("qwk ({:.6f} --> {:.6f})".format(val_acc_max, val_acc))
                     val_acc_max = val_acc
                     b_new_best = True
-                    best_acc = val_acc
-                    best_epoch = epoch
 
         if args.rank == 0 and args.logdir is not None:
             save_checkpoint(model, epoch, args, best_acc=val_acc, filename="model_final.pt")
@@ -466,7 +455,6 @@ def main_worker(gpu, args):
 
         scheduler.step()
 
-    print(best_acc, best_epoch)
     print("ALL DONE")
 
 
@@ -480,7 +468,7 @@ def parse_args():
     parser.add_argument("--num_classes", default=5, type=int, help="number of output classes")
     parser.add_argument("--mil_mode", default="att_trans", help="MIL algorithm")
     parser.add_argument(
-        "--tile_count", default=22, type=int, help="number of patches (instances) to extract from WSI image"
+        "--tile_count", default=44, type=int, help="number of patches (instances) to extract from WSI image"
     )
     parser.add_argument("--tile_size", default=256, type=int, help="size of square patch (instance) in pixels")
 
@@ -494,7 +482,7 @@ def parse_args():
     parser.add_argument("--logdir", default=None, help="path to log directory to store Tensorboard logs")
 
     parser.add_argument("--epochs", "--max_epochs", default=50, type=int, help="number of training epochs")
-    parser.add_argument("--batch_size", default=1, type=int, help="batch size, the number of WSI images per gpu")
+    parser.add_argument("--batch_size", default=4, type=int, help="batch size, the number of WSI images per gpu")
     parser.add_argument("--optim_lr", default=3e-5, type=float, help="initial learning rate")
 
     parser.add_argument("--weight_decay", default=0, type=float, help="optimizer weight decay")
@@ -517,7 +505,7 @@ def parse_args():
     )
     parser.add_argument("--dist-backend", default="nccl", type=str, help="distributed backend")
 
-    parser.add_argument("--quick", default=True, action="store_true", help="use a small subset of data for debugging")
+    parser.add_argument("--quick", action="store_true", help="use a small subset of data for debugging")
 
     args = parser.parse_args()
 

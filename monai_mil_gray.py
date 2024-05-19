@@ -45,6 +45,10 @@ def set_seed(seed):
 # Set a reproducible seed
 set_seed(42)
 
+import imageio
+def load_image(x):
+    return {"image": imageio.imread(x["image"]), "label": x['label']}
+
 def train_epoch(model, loader, optimizer, scaler, epoch, args):
     """One train epoch over the dataset"""
 
@@ -265,6 +269,19 @@ def main_worker(gpu, args):
     if args.rank == 0:
         print("Batch size is:", args.batch_size, "epochs", args.epochs)
 
+    # Remove all paths that don't exist
+    import json
+    with open(args.dataset_json, 'r') as f:
+        data = json.load(f)
+    existing_data = {'training': [], 'validation': []}
+    for split, paths in data.items():
+        for item in paths:
+            if os.path.exists(args.data_root + item['image']):
+                existing_data[split].append(item)
+    with open(args.dataset_json + '2', 'w+') as f:
+        json.dump(existing_data, f)            
+    args.dataset_json = args.dataset_json + '2'
+
     #############
     # Create MONAI dataset
     training_list = load_decathlon_datalist(
@@ -284,7 +301,7 @@ def main_worker(gpu, args):
 
     train_transform = Compose(
         [
-            LoadImaged(keys=["image"], reader=WSIReader, backend="cucim", dtype=np.uint8, level=1, image_only=True),
+            load_image,
             LabelEncodeIntegerGraded(keys=["label"], num_classes=args.num_classes),
             RandGridPatchd(
                 keys=["image"],
@@ -305,7 +322,7 @@ def main_worker(gpu, args):
 
     valid_transform = Compose(
         [
-            LoadImaged(keys=["image"], reader=WSIReader, backend="cucim", dtype=np.uint8, level=1, image_only=True),
+            load_image,
             LabelEncodeIntegerGraded(keys=["label"], num_classes=args.num_classes),
             GridPatchd(
                 keys=["image"],
@@ -473,7 +490,7 @@ def main_worker(gpu, args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Multiple Instance Learning (MIL) example of classification from WSI.")
     parser.add_argument(
-        "--data_root", default="/data/breast-cancer/PANDA/train_images/", help="path to root folder of images"
+        "--data_root", default="/data/breast-cancer/PANDA/train_images_gray/", help="path to root folder of images"
     )
     parser.add_argument("--dataset_json", default=None, type=str, help="path to dataset json file")
 
