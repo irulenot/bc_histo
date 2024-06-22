@@ -35,12 +35,20 @@ from torch.utils.data.dataloader import default_collate
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import warnings
+warnings.filterwarnings("ignore")
+import random
+from monai.utils import set_determinism
 
 def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
     torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    set_determinism(seed=0)
 
 # Set a reproducible seed
 set_seed(42)
@@ -168,13 +176,13 @@ def val_epoch(model, loader, epoch, args, max_tiles=None):
             PREDS.extend(pred)
             TARGETS.extend(target)
 
-            if args.rank == 0:
-                print(
-                    "Val epoch {}/{} {}/{}".format(epoch, args.epochs, idx, len(loader)),
-                    "loss: {:.4f}".format(loss),
-                    "acc: {:.4f}".format(acc),
-                    "time {:.2f}s".format(time.time() - start_time),
-                )
+            # if args.rank == 0:
+            #     print(
+            #         "Val epoch {}/{} {}/{}".format(epoch, args.epochs, idx, len(loader)),
+            #         "loss: {:.4f}".format(loss),
+            #         "acc: {:.4f}".format(acc),
+            #         "time {:.2f}s".format(time.time() - start_time),
+            #     )
             start_time = time.time()
 
         # Calculate QWK metric (Quadratic Weigted Kappa) https://en.wikipedia.org/wiki/Cohen%27s_kappa
@@ -257,13 +265,13 @@ def main_worker(gpu, args):
             backend=args.dist_backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank
         )
 
-    print(args.rank, " gpu", args.gpu)
+    # print(args.rank, " gpu", args.gpu)
 
     torch.cuda.set_device(args.gpu)  # use this default device (same as args.device if not distributed)
-    torch.backends.cudnn.benchmark = True
+    # torch.backends.cudnn.benchmark = True
 
-    if args.rank == 0:
-        print("Batch size is:", args.batch_size, "epochs", args.epochs)
+    # if args.rank == 0:
+    #     print("Batch size is:", args.batch_size, "epochs", args.epochs)
 
     #############
     # Create MONAI dataset
@@ -293,11 +301,11 @@ def main_worker(gpu, args):
                 sort_fn="min",
                 pad_mode=None,
                 constant_values=255,
-            ),
+            ).set_random_state(42),
             SplitDimd(keys=["image"], dim=0, keepdim=False, list_output=True),
-            RandFlipd(keys=["image"], spatial_axis=0, prob=0.5),
-            RandFlipd(keys=["image"], spatial_axis=1, prob=0.5),
-            RandRotate90d(keys=["image"], prob=0.5),
+            RandFlipd(keys=["image"], spatial_axis=0, prob=0.5).set_random_state(42),
+            RandFlipd(keys=["image"], spatial_axis=1, prob=0.5).set_random_state(42),
+            RandRotate90d(keys=["image"], prob=0.5).set_random_state(42),
             ScaleIntensityRanged(keys=["image"], a_min=np.float32(0), a_max=np.float32(255)),
             ToTensord(keys=["image", "label"]),
         ]
@@ -347,8 +355,8 @@ def main_worker(gpu, args):
         collate_fn=list_data_collate,
     )
 
-    if args.rank == 0:
-        print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
+    # if args.rank == 0:
+    #     print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
 
     model = milmodel.MILModel(num_classes=args.num_classes, pretrained=True, mil_mode=args.mil_mode)
 
@@ -361,7 +369,7 @@ def main_worker(gpu, args):
             start_epoch = checkpoint["epoch"]
         if "best_acc" in checkpoint:
             best_acc = checkpoint["best_acc"]
-        print("=> loaded checkpoint '{}' (epoch {}) (bestacc {})".format(args.checkpoint, start_epoch, best_acc))
+        # print("=> loaded checkpoint '{}' (epoch {}) (bestacc {})".format(args.checkpoint, start_epoch, best_acc))
 
     model.cuda(args.gpu)
 
@@ -397,8 +405,8 @@ def main_worker(gpu, args):
 
     if args.logdir is not None and args.rank == 0:
         writer = SummaryWriter(log_dir=args.logdir)
-        if args.rank == 0:
-            print("Writing Tensorboard logs to ", writer.log_dir)
+        # if args.rank == 0:
+        #     print("Writing Tensorboard logs to ", writer.log_dir)
     else:
         writer = None
 
@@ -414,18 +422,18 @@ def main_worker(gpu, args):
             train_sampler.set_epoch(epoch)
             torch.distributed.barrier()
 
-        print(args.rank, time.ctime(), "Epoch:", epoch)
+        # print(args.rank, time.ctime(), "Epoch:", epoch)
 
         epoch_time = time.time()
         train_loss, train_acc = train_epoch(model, train_loader, optimizer, scaler=scaler, epoch=epoch, args=args)
 
-        if args.rank == 0:
-            print(
-                "Final training  {}/{}".format(epoch, n_epochs - 1),
-                "loss: {:.4f}".format(train_loss),
-                "acc: {:.4f}".format(train_acc),
-                "time {:.2f}s".format(time.time() - epoch_time),
-            )
+        # if args.rank == 0:
+        #     print(
+        #         "Final training  {}/{}".format(epoch, n_epochs - 1),
+        #         "loss: {:.4f}".format(train_loss),
+        #         "acc: {:.4f}".format(train_acc),
+        #         "time {:.2f}s".format(time.time() - epoch_time),
+        #     )
 
         if args.rank == 0 and writer is not None:
             writer.add_scalar("train_loss", train_loss, epoch)
@@ -437,13 +445,13 @@ def main_worker(gpu, args):
             epoch_time = time.time()
             val_loss, val_acc, qwk = val_epoch(model, valid_loader, epoch=epoch, args=args, max_tiles=args.tile_count)
             if args.rank == 0:
-                print(
-                    "Final validation  {}/{}".format(epoch, n_epochs - 1),
-                    "loss: {:.4f}".format(val_loss),
-                    "acc: {:.4f}".format(val_acc),
-                    "qwk: {:.4f}".format(qwk),
-                    "time {:.2f}s".format(time.time() - epoch_time),
-                )
+                # print(
+                #     "Final validation  {}/{}".format(epoch, n_epochs - 1),
+                #     "loss: {:.4f}".format(val_loss),
+                #     "acc: {:.4f}".format(val_acc),
+                #     "qwk: {:.4f}".format(qwk),
+                #     "time {:.2f}s".format(time.time() - epoch_time),
+                # )
                 if writer is not None:
                     writer.add_scalar("val_loss", val_loss, epoch)
                     writer.add_scalar("val_acc", val_acc, epoch)
@@ -461,7 +469,7 @@ def main_worker(gpu, args):
         if args.rank == 0 and args.logdir is not None:
             save_checkpoint(model, epoch, args, best_acc=val_acc, filename="model_final.pt")
             if b_new_best:
-                print("Copying to model.pt new best model!!!!")
+                # print("Copying to model.pt new best model!!!!")
                 shutil.copyfile(os.path.join(args.logdir, "model_final.pt"), os.path.join(args.logdir, "model.pt"))
 
         scheduler.step()
@@ -506,7 +514,7 @@ def parse_args():
         type=int,
         help="run validation after this number of epochs, default 1 to run every epoch",
     )
-    parser.add_argument("--workers", default=2, type=int, help="number of workers for data loading")
+    parser.add_argument("--workers", default=3, type=int, help="number of workers for data loading")
 
     # for multigpu
     parser.add_argument("--distributed", default=False, action="store_true", help="use multigpu training, recommended")
@@ -521,10 +529,10 @@ def parse_args():
 
     args = parser.parse_args()
 
-    print("Argument values:")
-    for k, v in vars(args).items():
-        print(k, "=>", v)
-    print("-----------------")
+    # print("Argument values:")
+    # for k, v in vars(args).items():
+    #     print(k, "=>", v)
+    # print("-----------------")
 
     return args
 
@@ -545,7 +553,7 @@ if __name__ == "__main__":
         args.optim_lr = ngpus_per_node * args.optim_lr / 2  # heuristic to scale up learning rate in multigpu setup
         args.world_size = ngpus_per_node * args.world_size
 
-        print("Multigpu", ngpus_per_node, "rescaled lr", args.optim_lr)
+        # print("Multigpu", ngpus_per_node, "rescaled lr", args.optim_lr)
         mp.spawn(main_worker, nprocs=ngpus_per_node, args=(args,))
     else:
         main_worker(0, args)

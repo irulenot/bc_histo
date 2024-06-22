@@ -8,7 +8,7 @@ from tifffile import imsave
 from monai.data.wsi_reader import WSIReader
 import matplotlib.pyplot as plt
 
-input_dir = '/data/breast-cancer/PANDA/train_images/'
+input_dir = '/data/breast-cancer/PANDA/train_images_FFT_WSI/'
 output_dir = '/data/breast-cancer/PANDA/train_images_FFT_parts/'
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
@@ -21,9 +21,6 @@ def process_tiff(tiff_file):
     loader = LoadImaged(keys=["image"], reader=WSIReader, backend="cucim", dtype=np.uint8, level=0, image_only=True)
     image_dict = loader({"image": os.path.join(input_dir, tiff_file)})
     image = image_dict["image"]
-    
-    if image.shape[-1] <= 1024 or image.shape[-2] <= 1024:
-        return None
 
     data_np = image.squeeze().numpy()
     fft_channels = []
@@ -45,7 +42,7 @@ def process_tiff(tiff_file):
     imsave(output_file, fft_tensor)
     return output_file
 
-tiff_files = [f for f in os.listdir(input_dir) if f.endswith('.tiff') or f.endswith('.tif')]
+tiff_files = [f for f in os.listdir(input_dir)]
 
 for tiff_file in tqdm(tiff_files):
     result = process_tiff(tiff_file)
