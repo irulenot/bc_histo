@@ -7,10 +7,9 @@ from monai.transforms import LoadImaged
 from tifffile import imsave
 from monai.data.wsi_reader import WSIReader
 import matplotlib.pyplot as plt
-import cv2
 
 input_dir = '/data/breast-cancer/PANDA/train_images/'
-output_dir = '/data/breast-cancer/PANDA/train_images_FFT_gray/'
+output_dir = '/data/breast-cancer/PANDA/train_images_FFT_parts/'
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
@@ -23,23 +22,25 @@ def process_tiff(tiff_file):
     image_dict = loader({"image": os.path.join(input_dir, tiff_file)})
     image = image_dict["image"]
     
-    if image.shape[-1] < 1024 or image.shape[-2] < 1024:
+    if image.shape[-1] <= 1024 or image.shape[-2] <= 1024:
         return None
-    if image.shape[-1] > 25000 or image.shape[-2] > 25000:
-        return None
-    
-    image = np.transpose(image.numpy(), (1, 2, 0))
-    image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
-    radius = 1000
-    rows, cols = image.shape
-    crow, ccol = rows // 2, cols // 2
-    fft_data = np.fft.fft2(image)
-    fft_data_shifted = np.fft.fftshift(fft_data)
-    fft_tensor = fft_data_shifted[crow - radius:crow + radius, ccol - radius:ccol + radius]
+    data_np = image.squeeze().numpy()
+    fft_channels = []
+    radius = 500
+    for channel_data in data_np:
+        rows, cols = channel_data.shape
+        crow, ccol = rows // 2, cols // 2
+        fft_data = np.fft.fft2(channel_data)
+        fft_data_shifted = np.fft.fftshift(fft_data)
+        cropped_fft_data = fft_data_shifted[crow - radius:crow + radius, ccol - radius:ccol + radius]
+        magnitude = torch.abs(torch.tensor(cropped_fft_data)).numpy().astype(np.float32)
+        phase = torch.angle(torch.tensor(cropped_fft_data)).numpy().astype(np.float32)
+        fft_channels.append([magnitude, phase])
+    fft_tensor = np.stack(fft_channels, axis=0)
 
     fft_tensor = np.expand_dims(fft_tensor, axis=0)
-    fft_tensor = np.pad(fft_tensor, ((0, 0), (24, 24), (24, 24)), mode='constant', constant_values=0)
+    fft_tensor = np.pad(fft_tensor, ((0, 0), (0, 0), (12, 12), (12, 12)), mode='constant', constant_values=0)
 
     imsave(output_file, fft_tensor)
     return output_file
