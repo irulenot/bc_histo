@@ -8,10 +8,10 @@ from tifffile import imsave
 from monai.data.wsi_reader import WSIReader
 from concurrent.futures import ThreadPoolExecutor
 import matplotlib.pyplot as plt
-import json
+import json 
 
 input_dir = '/data/breast-cancer/PANDA/train_images_FFT_WSI/'
-output_dir = '/data/breast-cancer/PANDA/train_images_FFT500_corners/'
+output_dir = '/data/breast-cancer/PANDA/train_images_FFT500_shifted/'
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
@@ -25,16 +25,15 @@ def process_tiff(tiff_file):
         image = np.load(input_file)['array']
     except Exception as e:
         return 1
-    
+
     fft_channels = []
-    size = 500
+    radius = 500
     for channel_data in image:
-        top_left = channel_data[:size, :size]
-        top_right = channel_data[:size, -size:]
-        bottom_left = channel_data[-size:, :size]
-        bottom_right = channel_data[-size:, -size:]
-        fft_tensor_channel = np.stack([top_left, top_right, bottom_left, bottom_right], axis=0)
-        fft_channels.append(fft_tensor_channel)
+        rows, cols = channel_data.shape
+        crow, ccol = rows // 2, cols // 2
+        fft_data_shifted = np.fft.fftshift(channel_data)
+        cropped_fft_data = fft_data_shifted[crow - radius:crow + radius, ccol - radius:ccol + radius]
+        fft_channels.append(cropped_fft_data)
     fft_tensor = np.stack(fft_channels, axis=0)
 
     np.savez_compressed(output_file, array=fft_tensor, compression='gzip')

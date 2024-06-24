@@ -42,9 +42,19 @@ def process_tiff(tiff_file):
 
 tiff_files = [f for f in os.listdir(input_dir)]
 
+json_file_path = 'datalists/datalist_panda_fft_quick.json'
+with open(json_file_path, 'r') as file:
+    datalist_panda_fft_quick = json.load(file)
+json_filenames = set()
+for entry in datalist_panda_fft_quick['training']:
+    json_filenames.add(entry['image'][:-5] + '.npz')
+for entry in datalist_panda_fft_quick['validation']:
+    json_filenames.add(entry['image'][:-5] + '.npz')
+filtered_tiff_files = [filename for filename in tiff_files if filename in json_filenames]
+
 max_threads = 3
 with ThreadPoolExecutor(max_workers=max_threads) as executor:
-    results = list(tqdm(executor.map(process_tiff, tiff_files), total=len(tiff_files)))
+    results = list(tqdm(executor.map(process_tiff, filtered_tiff_files), total=len(filtered_tiff_files)))
 
 # # Verifying images
 # # Original

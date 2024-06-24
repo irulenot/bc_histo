@@ -543,9 +543,13 @@ if __name__ == "__main__":
     if args.dataset_json is None:
         # download default json datalist
         resource = "https://drive.google.com/uc?id=1L6PtKBlHHyUgTE4rVhRuOLTQKgD4tBRK"
-        dst = "./datalist_panda_0.json"
-        if not os.path.exists(dst):
-            gdown.download(resource, dst, quiet=False)
+        dst = "datalists/datalist_panda_0.json"
+        if args.quick == True:
+            dst = "datalists/datalist_panda_fft_quick.json"
+        else:
+            dst = "datalists/datalist_panda_fft.json"
+        # if not os.path.exists(dst):
+        #     gdown.download(resource, dst, quiet=False)
         args.dataset_json = dst
 
     if args.distributed:

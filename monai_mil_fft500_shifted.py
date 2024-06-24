@@ -58,7 +58,8 @@ set_seed(42)
 def fft_transform(batch_data, device):
     image = np.load(batch_data['image'][0])['array']
     image = image.real
-    image = image / np.max(np.abs(image))
+    for i in range(len(image)):
+        image[i] = image[i] / np.max(np.abs(image[i]))
     return torch.tensor(image).to(device), batch_data['label'].to(device)
 
 def train_epoch(model, loader, optimizer, scaler, epoch, args):
@@ -94,7 +95,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, args):
         loss = run_loss.aggregate()
         acc = run_acc.aggregate()
 
-        # if args.rank == 0:
+        # if args.rank == 1:
         #     print(
         #         "Epoch {}/{} {}/{}".format(epoch, args.epochs, idx, len(loader)),
         #         "loss: {:.4f}".format(loss),
@@ -144,7 +145,7 @@ def val_epoch(model, loader, epoch, args, max_tiles=None):
             PREDS.extend(pred)
             TARGETS.extend(target)
 
-            # if args.rank == 0:
+            # if args.rank == 1:
             #     print(
             #         "Val epoch {}/{} {}/{}".format(epoch, args.epochs, idx, len(loader)),
             #         "loss: {:.4f}".format(loss),
@@ -238,7 +239,7 @@ def main_worker(gpu, args):
     torch.cuda.set_device(args.gpu)  # use this default device (same as args.device if not distributed)
     # torch.backends.cudnn.benchmark = True
 
-    # if args.rank == 0:
+    # if args.rank == 1:
     #     print("Batch size is:", args.batch_size, "epochs", args.epochs)
 
     with open(args.dataset_json, 'r') as f:
@@ -338,7 +339,7 @@ def main_worker(gpu, args):
         sampler=val_sampler,
     )
 
-    # if args.rank == 0:
+    # if args.rank == 1:
     #     print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
    
     model = arch22()
@@ -364,7 +365,7 @@ def main_worker(gpu, args):
         # if we only want to validate existing checkpoint
         epoch_time = time.time()
         val_loss, val_acc, qwk = val_epoch(model, valid_loader, epoch=0, args=args, max_tiles=args.tile_count)
-        if args.rank == 0:
+        if args.rank == 1:
             print(
                 "Final validation loss: {:.4f}".format(val_loss),
                 "acc: {:.4f}".format(val_acc),
@@ -383,9 +384,9 @@ def main_worker(gpu, args):
     optimizer = torch.optim.AdamW(params, lr=args.optim_lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0)
 
-    if args.logdir is not None and args.rank == 0:
+    if args.logdir is not None and args.rank == 1:
         writer = SummaryWriter(log_dir=args.logdir)
-        # if args.rank == 0:
+        # if args.rank == 1:
         #     print("Writing Tensorboard logs to ", writer.log_dir)
     else:
         writer = None
@@ -407,7 +408,7 @@ def main_worker(gpu, args):
         epoch_time = time.time()
         train_loss, train_acc = train_epoch(model, train_loader, optimizer, scaler=scaler, epoch=epoch, args=args)
 
-        # if args.rank == 0:
+        # if args.rank == 1:
         #     print(
         #         "Final training  {}/{}".format(epoch, n_epochs - 1),
         #         "loss: {:.4f}".format(train_loss),
@@ -415,7 +416,7 @@ def main_worker(gpu, args):
         #         "time {:.2f}s".format(time.time() - epoch_time),
         #     )
 
-        if args.rank == 0 and writer is not None:
+        if args.rank == 1 and writer is not None:
             writer.add_scalar("train_loss", train_loss, epoch)
             writer.add_scalar("train_acc", train_acc, epoch)
 
@@ -424,7 +425,7 @@ def main_worker(gpu, args):
         if (epoch + 1) % args.val_every == 0:
             epoch_time = time.time()
             val_loss, val_acc, qwk = val_epoch(model, valid_loader, epoch=epoch, args=args, max_tiles=args.tile_count)
-            if args.rank == 0:
+            if args.rank == 1:
                 # print(
                 #     "Final validation  {}/{}".format(epoch, n_epochs - 1),
                 #     "loss: {:.4f}".format(val_loss),
@@ -446,7 +447,7 @@ def main_worker(gpu, args):
                     best_acc = val_acc
                     best_epoch = epoch
 
-        if args.rank == 0 and args.logdir is not None:
+        if args.rank == 1 and args.logdir is not None:
             save_checkpoint(model, epoch, args, best_acc=val_acc, filename="model_final.pt")
             if b_new_best:
                 # print("Copying to model.pt new best model!!!!")
@@ -499,7 +500,7 @@ def parse_args():
     # for multigpu
     parser.add_argument("--distributed", default=False, action="store_true", help="use multigpu training, recommended")
     parser.add_argument("--world_size", default=1, type=int, help="number of nodes for distributed training")
-    parser.add_argument("--rank", default=0, type=int, help="node rank for distributed training")
+    parser.add_argument("--rank", default=1, type=int, help="node rank for distributed training")
     parser.add_argument(
         "--dist-url", default="tcp://127.0.0.1:23456", type=str, help="url used to set up distributed training"
     )
@@ -523,9 +524,12 @@ if __name__ == "__main__":
     if args.dataset_json is None:
         # download default json datalist
         resource = "https://drive.google.com/uc?id=1L6PtKBlHHyUgTE4rVhRuOLTQKgD4tBRK"
-        dst = "./datalist_panda_0.json"
-        if not os.path.exists(dst):
-            gdown.download(resource, dst, quiet=False)
+        if args.quick == True:
+            dst = "datalists/datalist_panda_fft_quick.json"
+        else:
+            dst = "datalists/datalist_panda_fft.json"
+        # if not os.path.exists(dst):
+        #     gdown.download(resource, dst, quiet=False)
         args.dataset_json = dst
 
     if args.distributed:
@@ -536,4 +540,4 @@ if __name__ == "__main__":
         # print("Multigpu", ngpus_per_node, "rescaled lr", args.optim_lr)
         mp.spawn(main_worker, nprocs=ngpus_per_node, args=(args,))
     else:
-        main_worker(0, args)
+        main_worker(1, args)
