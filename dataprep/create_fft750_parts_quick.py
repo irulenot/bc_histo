@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import json
 
 input_dir = '/data/breast-cancer/PANDA/train_images_FFT_WSI/'
-output_dir = '/data/breast-cancer/PANDA/train_images_FFT500_corners_mid/'
+output_dir = '/data/breast-cancer/PANDA/train_images_FFT750_parts/'
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
@@ -25,21 +25,17 @@ def process_tiff(tiff_file):
         image = np.load(input_file)['array']
     except Exception as e:
         return 1
-    
+
     fft_channels = []
-    size = 500
+    radius = 750
     for channel_data in image:
-        mid_start1 = (channel_data.shape[0] // 2) - size//2
-        mid_end1 = (channel_data.shape[0] // 2) + size//2
-        mid_start2 = (channel_data.shape[1] // 2) - size//2
-        mid_end2 = (channel_data.shape[1] // 2) + size//2
-        middle = channel_data[mid_start1:mid_end1, mid_start2:mid_end2]
-        top_left = channel_data[:size, :size]
-        top_right = channel_data[:size, -size:]
-        bottom_left = channel_data[-size:, :size]
-        bottom_right = channel_data[-size:, -size:]
-        fft_tensor_channel = np.stack([middle, top_left, top_right, bottom_left, bottom_right], axis=0)
-        fft_channels.append(fft_tensor_channel)
+        rows, cols = channel_data.shape
+        crow, ccol = rows // 2, cols // 2
+        fft_data_shifted = np.fft.fftshift(channel_data)
+        cropped_fft_data = fft_data_shifted[crow - radius:crow + radius, ccol - radius:ccol + radius]
+        magnitude = torch.abs(torch.tensor(cropped_fft_data)).numpy().astype(np.float32)
+        phase = torch.angle(torch.tensor(cropped_fft_data)).numpy().astype(np.float32)
+        fft_channels.append([magnitude, phase])
     fft_tensor = np.stack(fft_channels, axis=0)
 
     np.savez_compressed(output_file, array=fft_tensor, compression='gzip')

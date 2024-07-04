@@ -57,9 +57,9 @@ set_seed(42)
 
 def fft_transform(batch_data, device):
     image = np.load(batch_data['image'][0])['array']
-    for i in range(len(image)):
-        for j in range(len(image[0])):
-            image[i][j] = image[i][j] / np.max(np.abs(image[i][j]))
+    # for i in range(len(image)):
+    #     for j in range(len(image[0])):
+    #         image[i][j] = image[i][j] / np.max(np.abs(image[i][j]))
     return torch.tensor(image).to(device), batch_data['label'].to(device)
 
 def train_epoch(model, loader, optimizer, scaler, epoch, args):
@@ -482,7 +482,7 @@ def parse_args():
 
     parser.add_argument("--logdir", default=None, help="path to log directory to store Tensorboard logs")
 
-    parser.add_argument("--epochs", "--max_epochs", default=50, type=int, help="number of training epochs")
+    parser.add_argument("--epochs", "--max_epochs", default=300, type=int, help="number of training epochs")
     parser.add_argument("--batch_size", default=1, type=int, help="batch size, the number of WSI images per gpu")
     parser.add_argument("--optim_lr", default=3e-5, type=float, help="initial learning rate")
 

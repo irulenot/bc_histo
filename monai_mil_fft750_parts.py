@@ -5,6 +5,7 @@ import collections.abc
 import os
 import shutil
 import time
+import json
 
 import gdown
 import numpy as np
@@ -39,6 +40,7 @@ import warnings
 warnings.filterwarnings("ignore")
 import random
 from monai.utils import set_determinism
+from models import *
 
 def set_seed(seed):
     random.seed(seed)
@@ -53,6 +55,13 @@ def set_seed(seed):
 # Set a reproducible seed
 set_seed(42)
 
+def fft_transform(batch_data, device):
+    image = np.load(batch_data['image'][0])['array']
+    # for i in range(len(image)):
+    #     for j in range(len(image[0])):
+    #         image[i][j] = image[i][j] / np.max(np.abs(image[i][j]))
+    return torch.tensor(image).to(device), batch_data['label'].to(device)
+
 def train_epoch(model, loader, optimizer, scaler, epoch, args):
     """One train epoch over the dataset"""
 
@@ -66,13 +75,12 @@ def train_epoch(model, loader, optimizer, scaler, epoch, args):
     loss, acc = 0.0, 0.0
 
     for idx, batch_data in enumerate(loader):
-        data = batch_data["image"].as_subclass(torch.Tensor).cuda(args.rank)
-        target = batch_data["label"].as_subclass(torch.Tensor).cuda(args.rank)
+        data, target = fft_transform(batch_data, args.rank)
 
         optimizer.zero_grad(set_to_none=True)
 
         with autocast(enabled=args.amp):
-            logits = model(data)
+            logits = model(data.unsqueeze(0))
             loss = criterion(logits, target)
 
         scaler.scale(loss).backward()
@@ -87,7 +95,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, args):
         loss = run_loss.aggregate()
         acc = run_acc.aggregate()
 
-        # if args.rank == 0:
+        # if args.rank == 1:
         #     print(
         #         "Epoch {}/{} {}/{}".format(epoch, args.epochs, idx, len(loader)),
         #         "loss: {:.4f}".format(loss),
@@ -105,9 +113,6 @@ def val_epoch(model, loader, epoch, args, max_tiles=None):
     model.eval()
 
     model2 = model if not args.distributed else model.module
-    has_extra_outputs = model2.mil_mode == "att_trans_pyramid"
-    extra_outputs = model2.extra_outputs
-    calc_head = model2.calc_head
 
     criterion = nn.BCEWithLogitsLoss()
 
@@ -121,47 +126,11 @@ def val_epoch(model, loader, epoch, args, max_tiles=None):
 
     with torch.no_grad():
         for idx, batch_data in enumerate(loader):
-            data = batch_data["image"].as_subclass(torch.Tensor).cuda(args.rank)
-            target = batch_data["label"].as_subclass(torch.Tensor).cuda(args.rank)
+            data, target = fft_transform(batch_data, args.rank)
 
             with autocast(enabled=args.amp):
-                if max_tiles is not None and data.shape[1] > max_tiles:
-                    # During validation, we want to use all instances/patches
-                    # and if its number is very big, we may run out of GPU memory
-                    # in this case, we first iteratively go over subsets of patches to calculate backbone features
-                    # and at the very end calculate the classification output
-
-                    logits = []
-                    logits2 = []
-
-                    for i in range(int(np.ceil(data.shape[1] / float(max_tiles)))):
-                        data_slice = data[:, i * max_tiles : (i + 1) * max_tiles]
-                        logits_slice = model(data_slice, no_head=True)
-                        logits.append(logits_slice)
-
-                        if has_extra_outputs:
-                            logits2.append(
-                                [
-                                    extra_outputs["layer1"],
-                                    extra_outputs["layer2"],
-                                    extra_outputs["layer3"],
-                                    extra_outputs["layer4"],
-                                ]
-                            )
-
-                    logits = torch.cat(logits, dim=1)
-                    if has_extra_outputs:
-                        extra_outputs["layer1"] = torch.cat([l[0] for l in logits2], dim=0)
-                        extra_outputs["layer2"] = torch.cat([l[1] for l in logits2], dim=0)
-                        extra_outputs["layer3"] = torch.cat([l[2] for l in logits2], dim=0)
-                        extra_outputs["layer4"] = torch.cat([l[3] for l in logits2], dim=0)
-
-                    logits = calc_head(logits)
-
-                else:
-                    # if number of instances is not big, we can run inference directly
-                    logits = model(data)
-
+                # if number of instances is not big, we can run inference directly
+                logits = model(data.unsqueeze(0))
                 loss = criterion(logits, target)
 
             pred = logits.sigmoid().sum(1).detach().round()
@@ -176,7 +145,7 @@ def val_epoch(model, loader, epoch, args, max_tiles=None):
             PREDS.extend(pred)
             TARGETS.extend(target)
 
-            # if args.rank == 0:
+            # if args.rank == 1:
             #     print(
             #         "Val epoch {}/{} {}/{}".format(epoch, args.epochs, idx, len(loader)),
             #         "loss: {:.4f}".format(loss),
@@ -270,8 +239,20 @@ def main_worker(gpu, args):
     torch.cuda.set_device(args.gpu)  # use this default device (same as args.device if not distributed)
     # torch.backends.cudnn.benchmark = True
 
-    # if args.rank == 0:
+    # if args.rank == 1:
     #     print("Batch size is:", args.batch_size, "epochs", args.epochs)
+
+    with open(args.dataset_json, 'r') as f:
+        data = json.load(f)
+    existing_data = {'training': [], 'validation': []}
+    for split, paths in data.items():
+        for item in paths:
+            file_name = item['image'][:-5] + '.npz'
+            if os.path.exists(args.data_root + file_name):
+                existing_data[split].append(item)
+    with open(args.dataset_json + '2', 'w+') as f:
+        json.dump(existing_data, f)            
+    args.dataset_json = args.dataset_json + '2'
 
     #############
     # Create MONAI dataset
@@ -290,41 +271,46 @@ def main_worker(gpu, args):
         training_list = training_list[:16]
         validation_list = validation_list[:16]
 
+    for i , path in enumerate(training_list):
+        training_list[i]['image'] = training_list[i]['image'][:-5] + '.npz'
+    for i , path in enumerate(validation_list):
+        validation_list[i]['image'] = validation_list[i]['image'][:-5] + '.npz'
+
     train_transform = Compose(
         [
-            LoadImaged(keys=["image"], reader=WSIReader, backend="cucim", dtype=np.uint8, level=1, image_only=True),
+            # LoadImaged(keys=["image"], reader=WSIReader, backend="cucim", dtype=np.uint8, level=1, image_only=True),
             LabelEncodeIntegerGraded(keys=["label"], num_classes=args.num_classes),
-            RandGridPatchd(
-                keys=["image"],
-                patch_size=(args.tile_size, args.tile_size),
-                num_patches=args.tile_count,
-                sort_fn="min",
-                pad_mode=None,
-                constant_values=255,
-            ).set_random_state(42),
-            SplitDimd(keys=["image"], dim=0, keepdim=False, list_output=True),
-            RandFlipd(keys=["image"], spatial_axis=0, prob=0.5).set_random_state(42),
-            RandFlipd(keys=["image"], spatial_axis=1, prob=0.5).set_random_state(42),
-            RandRotate90d(keys=["image"], prob=0.5).set_random_state(42),
-            ScaleIntensityRanged(keys=["image"], a_min=np.float32(0), a_max=np.float32(255)),
-            ToTensord(keys=["image", "label"]),
+            # RandGridPatchd(
+            #     keys=["image"],
+            #     patch_size=(args.tile_size, args.tile_size),
+            #     num_patches=args.tile_count,
+            #     sort_fn="min",
+            #     pad_mode=None,
+            #     constant_values=255,
+            # ).set_random_state(42),
+            # SplitDimd(keys=["image"], dim=0, keepdim=False, list_output=True),
+            # RandFlipd(keys=["image"], spatial_axis=0, prob=0.5).set_random_state(42),
+            # RandFlipd(keys=["image"], spatial_axis=1, prob=0.5).set_random_state(42),
+            # RandRotate90d(keys=["image"], prob=0.5).set_random_state(42),
+            # ScaleIntensityRanged(keys=["image"], a_min=np.float32(0), a_max=np.float32(255)),
+            # ToTensord(keys=["image", "label"]),
         ]
     )
 
     valid_transform = Compose(
         [
-            LoadImaged(keys=["image"], reader=WSIReader, backend="cucim", dtype=np.uint8, level=1, image_only=True),
+            # LoadImaged(keys=["image"], reader=WSIReader, backend="cucim", dtype=np.uint8, level=1, image_only=True),
             LabelEncodeIntegerGraded(keys=["label"], num_classes=args.num_classes),
-            GridPatchd(
-                keys=["image"],
-                patch_size=(args.tile_size, args.tile_size),
-                threshold=0.999 * 3 * 255 * args.tile_size * args.tile_size,
-                pad_mode=None,
-                constant_values=255,
-            ),
-            SplitDimd(keys=["image"], dim=0, keepdim=False, list_output=True),
-            ScaleIntensityRanged(keys=["image"], a_min=np.float32(0), a_max=np.float32(255)),
-            ToTensord(keys=["image", "label"]),
+            # GridPatchd(
+            #     keys=["image"],
+            #     patch_size=(args.tile_size, args.tile_size),
+            #     threshold=0.999 * 3 * 255 * args.tile_size * args.tile_size,
+            #     pad_mode=None,
+            #     constant_values=255,
+            # ),
+            # SplitDimd(keys=["image"], dim=0, keepdim=False, list_output=True),
+            # ScaleIntensityRanged(keys=["image"], a_min=np.float32(0), a_max=np.float32(255)),
+            # ToTensord(keys=["image", "label"]),
         ]
     )
 
@@ -342,7 +328,6 @@ def main_worker(gpu, args):
         pin_memory=True,
         multiprocessing_context="spawn" if args.workers > 0 else None,
         sampler=train_sampler,
-        collate_fn=list_data_collate,
     )
     valid_loader = torch.utils.data.DataLoader(
         dataset_valid,
@@ -352,13 +337,12 @@ def main_worker(gpu, args):
         pin_memory=True,
         multiprocessing_context="spawn" if args.workers > 0 else None,
         sampler=val_sampler,
-        collate_fn=list_data_collate,
     )
 
-    # if args.rank == 0:
+    # if args.rank == 1:
     #     print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
-
-    model = milmodel.MILModel(num_classes=args.num_classes, pretrained=True, mil_mode=args.mil_mode)
+   
+    model = arch242()
 
     best_acc = 0
     start_epoch = 0
@@ -381,7 +365,7 @@ def main_worker(gpu, args):
         # if we only want to validate existing checkpoint
         epoch_time = time.time()
         val_loss, val_acc, qwk = val_epoch(model, valid_loader, epoch=0, args=args, max_tiles=args.tile_count)
-        if args.rank == 0:
+        if args.rank == 1:
             print(
                 "Final validation loss: {:.4f}".format(val_loss),
                 "acc: {:.4f}".format(val_acc),
@@ -395,17 +379,14 @@ def main_worker(gpu, args):
 
     if args.mil_mode in ["att_trans", "att_trans_pyramid"]:
         m = model if not args.distributed else model.module
-        params = [
-            {"params": list(m.attention.parameters()) + list(m.myfc.parameters()) + list(m.net.parameters())},
-            {"params": list(m.transformer.parameters()), "lr": 6e-6, "weight_decay": 0.1},
-        ]
+        params = model.parameters()
 
     optimizer = torch.optim.AdamW(params, lr=args.optim_lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0)
 
-    if args.logdir is not None and args.rank == 0:
+    if args.logdir is not None and args.rank == 1:
         writer = SummaryWriter(log_dir=args.logdir)
-        # if args.rank == 0:
+        # if args.rank == 1:
         #     print("Writing Tensorboard logs to ", writer.log_dir)
     else:
         writer = None
@@ -427,7 +408,7 @@ def main_worker(gpu, args):
         epoch_time = time.time()
         train_loss, train_acc = train_epoch(model, train_loader, optimizer, scaler=scaler, epoch=epoch, args=args)
 
-        # if args.rank == 0:
+        # if args.rank == 1:
         #     print(
         #         "Final training  {}/{}".format(epoch, n_epochs - 1),
         #         "loss: {:.4f}".format(train_loss),
@@ -435,7 +416,7 @@ def main_worker(gpu, args):
         #         "time {:.2f}s".format(time.time() - epoch_time),
         #     )
 
-        if args.rank == 0 and writer is not None:
+        if args.rank == 1 and writer is not None:
             writer.add_scalar("train_loss", train_loss, epoch)
             writer.add_scalar("train_acc", train_acc, epoch)
 
@@ -444,7 +425,7 @@ def main_worker(gpu, args):
         if (epoch + 1) % args.val_every == 0:
             epoch_time = time.time()
             val_loss, val_acc, qwk = val_epoch(model, valid_loader, epoch=epoch, args=args, max_tiles=args.tile_count)
-            if args.rank == 0:
+            if args.rank == 1:
                 # print(
                 #     "Final validation  {}/{}".format(epoch, n_epochs - 1),
                 #     "loss: {:.4f}".format(val_loss),
@@ -466,7 +447,7 @@ def main_worker(gpu, args):
                     best_acc = val_acc
                     best_epoch = epoch
 
-        if args.rank == 0 and args.logdir is not None:
+        if args.rank == 1 and args.logdir is not None:
             save_checkpoint(model, epoch, args, best_acc=val_acc, filename="model_final.pt")
             if b_new_best:
                 # print("Copying to model.pt new best model!!!!")
@@ -481,7 +462,7 @@ def main_worker(gpu, args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Multiple Instance Learning (MIL) example of classification from WSI.")
     parser.add_argument(
-        "--data_root", default="/data/breast-cancer/PANDA/train_images/", help="path to root folder of images"
+        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT750_parts/", help="path to root folder of images"
     )
     parser.add_argument("--dataset_json", default=None, type=str, help="path to dataset json file")
 
@@ -501,7 +482,7 @@ def parse_args():
 
     parser.add_argument("--logdir", default=None, help="path to log directory to store Tensorboard logs")
 
-    parser.add_argument("--epochs", "--max_epochs", default=300, type=int, help="number of training epochs")
+    parser.add_argument("--epochs", "--max_epochs", default=100, type=int, help="number of training epochs")
     parser.add_argument("--batch_size", default=1, type=int, help="batch size, the number of WSI images per gpu")
     parser.add_argument("--optim_lr", default=3e-5, type=float, help="initial learning rate")
 
@@ -514,18 +495,18 @@ def parse_args():
         type=int,
         help="run validation after this number of epochs, default 1 to run every epoch",
     )
-    parser.add_argument("--workers", default=3, type=int, help="number of workers for data loading")
+    parser.add_argument("--workers", default=1, type=int, help="number of workers for data loading")
 
     # for multigpu
     parser.add_argument("--distributed", default=False, action="store_true", help="use multigpu training, recommended")
     parser.add_argument("--world_size", default=1, type=int, help="number of nodes for distributed training")
-    parser.add_argument("--rank", default=0, type=int, help="node rank for distributed training")
+    parser.add_argument("--rank", default=1, type=int, help="node rank for distributed training")
     parser.add_argument(
         "--dist-url", default="tcp://127.0.0.1:23456", type=str, help="url used to set up distributed training"
     )
     parser.add_argument("--dist-backend", default="nccl", type=str, help="distributed backend")
 
-    parser.add_argument("--quick", default=False, action="store_true", help="use a small subset of data for debugging")
+    parser.add_argument("--quick", default=True, action="store_true", help="use a small subset of data for debugging")
 
     args = parser.parse_args()
 
@@ -543,7 +524,6 @@ if __name__ == "__main__":
     if args.dataset_json is None:
         # download default json datalist
         resource = "https://drive.google.com/uc?id=1L6PtKBlHHyUgTE4rVhRuOLTQKgD4tBRK"
-        dst = "datalists/datalist_panda_0.json"
         if args.quick == True:
             dst = "datalists/datalist_panda_fft_quick.json"
         else:
@@ -560,4 +540,4 @@ if __name__ == "__main__":
         # print("Multigpu", ngpus_per_node, "rescaled lr", args.optim_lr)
         mp.spawn(main_worker, nprocs=ngpus_per_node, args=(args,))
     else:
-        main_worker(0, args)
+        main_worker(1, args)

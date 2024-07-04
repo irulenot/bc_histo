@@ -58,9 +58,8 @@ set_seed(42)
 def fft_transform(batch_data, device):
     image = np.load(batch_data['image'][0])['array']
     image = image.real
-    for i in range(len(image)):
-        for j in range(len(image[0])):
-            image[i][j] = image[i][j] / np.max(np.abs(image[i][j]))
+    # for i in range(len(image)):
+    #     image[i] = image[i] / np.max(np.abs(image[i]))
     return torch.tensor(image).to(device), batch_data['label'].to(device)
 
 def train_epoch(model, loader, optimizer, scaler, epoch, args):
@@ -451,7 +450,7 @@ def main_worker(gpu, args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Multiple Instance Learning (MIL) example of classification from WSI.")
     parser.add_argument(
-        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT500_corners/", help="path to root folder of images"
+        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT500_corners_mid/", help="path to root folder of images"
     )
     parser.add_argument("--dataset_json", default=None, type=str, help="path to dataset json file")
 
