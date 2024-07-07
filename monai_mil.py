@@ -525,7 +525,7 @@ def parse_args():
     )
     parser.add_argument("--dist-backend", default="nccl", type=str, help="distributed backend")
 
-    parser.add_argument("--quick", default=False, action="store_true", help="use a small subset of data for debugging")
+    parser.add_argument("--quick", default=True, action="store_true", help="use a small subset of data for debugging")
 
     args = parser.parse_args()
 
