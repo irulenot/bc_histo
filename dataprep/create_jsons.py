@@ -3,7 +3,7 @@ import random
 import json
 
 # Directory path
-directory = '/data/breast-cancer/PANDA/train_images_FFT10000_WSI_grayscaled'
+directory = '/data/breast-cancer/PANDA/train_images_FFT_WSI_grayscaled'
 # Get all filenames in the directory
 filenames = os.listdir(directory)
 # Strip ".npz" suffix from each filename
@@ -37,18 +37,18 @@ split_index = int(0.8 * len(combined_data))
 data['training'] = combined_data[:split_index]
 data['validation'] = combined_data[split_index:]
 
-json_file = '/home/anthony/bc_histo/datalists/datalist_panda_fft_10000.json'
+json_file = '/home/anthony/bc_histo/datalists/datalist_panda_fft.json'
 
 # Save the data dictionary as JSON
 with open(json_file, 'w') as f:
     json.dump(data, f, indent=4)
 
 # Restrict to max 16 elements in training and validation
-data['training'] = data['training'][:16]
-data['validation'] = data['validation'][:16]
+data['training'] = data['training'][:100]
+data['validation'] = data['validation'][:20]
 
 # Path to save the JSON file
-json_file = '/home/anthony/bc_histo/datalists/datalist_panda_fft_quick_10000.json'
+json_file = '/home/anthony/bc_histo/datalists/datalist_panda_fft_quick.json'
 
 # Save the data dictionary as JSON
 with open(json_file, 'w') as f:

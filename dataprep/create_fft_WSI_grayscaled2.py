@@ -17,6 +17,7 @@ from PIL import Image
 import torch
 import gzip
 import shutil
+import torch.nn.functional as F
 
 input_dir = '/data/breast-cancer/PANDA/train_images/'
 output_dir = '/data/breast-cancer/PANDA/train_images_FFT_WSI_grayscaled/'
@@ -25,8 +26,8 @@ if not os.path.exists(output_dir):
 
 def process_tiff(tiff_file):
     output_file = os.path.join(output_dir, tiff_file)[:-5]
-    if os.path.exists(f'{output_file}.npz'):
-        return 0
+    # if os.path.exists(f'{output_file}.npz'):
+    #     return 0
 
     loader = LoadImaged(keys=["image"], reader=WSIReader, backend="cucim", dtype=np.uint8, level=0, image_only=True)
     image_dict = loader({"image": os.path.join(input_dir, tiff_file)})
@@ -43,17 +44,42 @@ def process_tiff(tiff_file):
     gray_image = cv2.cvtColor(padded_image, cv2.COLOR_BGR2GRAY)
     gray_image_tensor = torch.tensor(gray_image, dtype=torch.float32)
     fft_img = torch.fft.fft2(gray_image_tensor, dim=(-2, -1))
-    fft_img = torch.fft.fftshift(fft_img, dim=(-2, -1))
-    # magnitude = torch.abs(fft_img)
-    # phase = torch.angle(fft_img)
 
-    # h, w = fft_img.shape[-2], fft_img.shape[-1]
+    # mask = torch.zeros(fft_img.shape)
     # crop_size = 2000
-    # start_h = h // 2 - crop_size // 2
-    # start_w = w // 2 - crop_size // 2
-    # cropped_fft_img = fft_img[start_h:start_h+crop_size, start_w:start_w+crop_size]
+    # quarter = crop_size//4
+    # mask[:quarter, :] = 255
+    # mask[-quarter:, :] = 255
+    # mask[:, -quarter:] = 255
+    # mask[:, :quarter] = 255
+
+    mesh_path = '/data/breast-cancer/PANDA/train_images_FFT_WSI_grayscaled/mesh.npz'
+    if not os.path.exists(mesh_path):
+        height, width = 20000, 20000
+        x_coords = torch.arange(width).repeat(height, 1)
+        y_coords = torch.arange(height).repeat(width, 1).transpose(0, 1)
+        coords_tensor = torch.stack((x_coords, y_coords), dim=-1)
+
+        crop_size = 2000
+        quarter = crop_size//4
+        Top = coords_tensor[:quarter, :]
+        Bottom = coords_tensor[-quarter:, :]
+        Right = coords_tensor[:, -quarter:].permute(1, 0, 2)
+        Left = coords_tensor[:, :quarter].permute(1, 0, 2)
+        TB = torch.stack([Top, Bottom])
+        LR = torch.stack([Left, Right])
+        np.savez_compressed(mesh_path, array1=TB.numpy(), array2=LR.numpy())
+
+    crop_size = 2000
+    quarter = crop_size//4
+    Top = fft_img[:quarter, :]
+    Bottom = fft_img[-quarter:, :]
+    Right = fft_img[:, -quarter:].T
+    Left = fft_img[:, :quarter].T
+    TB = torch.stack([Top, Bottom])
+    LR = torch.stack([Left, Right])
     
-    np.savez_compressed(f'{output_file}.npz', fft_img.numpy())
+    np.savez_compressed(f'{output_file}', array1=TB.numpy(), array2=LR.numpy())
     return output_file
 
 

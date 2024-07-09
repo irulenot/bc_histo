@@ -17,9 +17,10 @@ from PIL import Image
 import torch
 import gzip
 import shutil
+import torch.nn.functional as F
 
 input_dir = '/data/breast-cancer/PANDA/train_images/'
-output_dir = '/data/breast-cancer/PANDA/train_images_FFT_WSI_grayscaled/'
+output_dir = '/data/breast-cancer/PANDA/train_images_FFT_WSI_grayscaled2/'
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
@@ -36,24 +37,36 @@ def process_tiff(tiff_file):
     if image.shape[1] > 20000 or image.shape[2] > 20000:
         return
 
-    target_size = (20000, 20000) # pad don't resize, w 255?
-    pad_height = target_size[0] - image.shape[1]
-    pad_width = target_size[1] - image.shape[2]
-    padded_image = np.pad(image.transpose(1, 2, 0), ((0, pad_height), (0, pad_width), (0, 0)), mode='constant', constant_values=255)
+    # target_size = (20000, 20000) # pad don't resize, w 255?
+    # pad_height = target_size[0] - image.shape[1]
+    # pad_width = target_size[1] - image.shape[2]
+    padded_image = np.pad(image.transpose(1, 2, 0), ((0, 0), (0, 0), (0, 0)), mode='constant', constant_values=255)
     gray_image = cv2.cvtColor(padded_image, cv2.COLOR_BGR2GRAY)
     gray_image_tensor = torch.tensor(gray_image, dtype=torch.float32)
     fft_img = torch.fft.fft2(gray_image_tensor, dim=(-2, -1))
-    fft_img = torch.fft.fftshift(fft_img, dim=(-2, -1))
-    # magnitude = torch.abs(fft_img)
-    # phase = torch.angle(fft_img)
 
-    # h, w = fft_img.shape[-2], fft_img.shape[-1]
+    # mask = torch.zeros(fft_img.shape)
     # crop_size = 2000
-    # start_h = h // 2 - crop_size // 2
-    # start_w = w // 2 - crop_size // 2
-    # cropped_fft_img = fft_img[start_h:start_h+crop_size, start_w:start_w+crop_size]
+    # quarter = crop_size//4
+    # mask[:quarter, :mask.size(1)-quarter] = 255
+    # mask[-quarter:, quarter:] = 255
+    # mask[:mask.size(0)-quarter, -quarter:] = 255
+    # mask[quarter:, :quarter] = 255
+
+    crop_size = 2000
+    quarter = crop_size//4
+    Top = fft_img[:quarter, :fft_img.size(1)-quarter]
+    Bottom = fft_img[-quarter:, quarter:]
+    Right = fft_img[:fft_img.size(0)-quarter, -quarter:]
+    Left = fft_img[quarter:, :quarter]
+    # Apply padding only along dimension 1
+    Top = F.pad(Top, (0, quarter), "constant", 0)
+    Bottom = F.pad(Bottom, (quarter, 0), "constant", 0)
+    Right = F.pad(Right, (0, 0, quarter, 0), "constant", 0)
+    Left = F.pad(Left, (0, 0, 0, quarter), "constant", 0)
+    combined = torch.cat([Top, Bottom, Right, Left], dim=0)
     
-    np.savez_compressed(f'{output_file}.npz', fft_img.numpy())
+    np.savez_compressed(f'{output_file}.npz', combined.numpy())
     return output_file
 
 

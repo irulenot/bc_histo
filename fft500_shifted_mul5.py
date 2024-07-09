@@ -349,7 +349,7 @@ def main_worker(gpu, args):
     # if args.rank == 0:
     #     print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
    
-    model = arch31()
+    model = arch5()
 
     best_acc = 0
     start_epoch = 0
@@ -470,7 +470,7 @@ def main_worker(gpu, args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Multiple Instance Learning (MIL) example of classification from WSI.")
     parser.add_argument(
-        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT4000_WSI_grayscaled/", help="path to root folder of images"
+        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT_WSI_grayscaled/", help="path to root folder of images"
     )
     parser.add_argument("--dataset_json", default=None, type=str, help="path to dataset json file")
 
@@ -533,9 +533,9 @@ if __name__ == "__main__":
         # download default json datalist
         resource = "https://drive.google.com/uc?id=1L6PtKBlHHyUgTE4rVhRuOLTQKgD4tBRK"
         if args.quick == False:
-            dst = "datalists/datalist_panda_fft_quick.json"
+            dst = "datalists/datalist_panda_fft_quick_raw.json"
         else:
-            dst = "datalists/datalist_panda_fft.json"
+            dst = "datalists/datalist_panda_fft_raw.json"
         # if not os.path.exists(dst):
         #     gdown.download(resource, dst, quiet=False)
         args.dataset_json = dst
