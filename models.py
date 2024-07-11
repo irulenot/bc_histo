@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch
 import numpy as np
 import cv2
+import math
 
 class arch2(nn.Module):
     def __init__(self):
@@ -733,160 +734,6 @@ class arch61(nn.Module):
         output = self.classification_head(magnitude)
 
         return output
-
-class arch62(nn.Module):
-
-    def __init__(self):
-        super(arch62, self).__init__()
-
-        self.magnitude_proj = nn.Linear(19500, 1950)
-        self.magnitude_proj_norm = nn.LayerNorm(1950)
-        self.phase_proj = nn.Linear(19500, 1950)
-        self.phase_proj_norm = nn.LayerNorm(1950)
-
-        self.magnitude_pos_embed = nn.Parameter(torch.randn(1, 2000, 1950))
-        self.phase_pos_embed = nn.Parameter(torch.randn(1, 2000, 1950))
-
-        layer = nn.TransformerEncoderLayer(d_model=3900, nhead=5, activation='gelu')
-        self.encoder = nn.TransformerEncoder(layer, num_layers=5)
-
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.GELU(),
-            nn.Dropout(0.1),
-        )
-
-        self.classification_head = nn.Sequential(
-            nn.Linear(30500, 3050),
-            nn.LayerNorm(3050),
-            nn.GELU(),
-            nn.Linear(3050, 305),
-            nn.LayerNorm(305),
-            nn.GELU(),
-            nn.Linear(305, 5)
-        )
-
-    def forward(self, TB, LR):
-        TB, LR = TB.unsqueeze(0), LR.unsqueeze(0)
-        TB_magnitude = torch.abs(TB)[..., :-500]
-        LR_magnitude = torch.abs(LR)[..., :-500]
-        TB_phase = torch.angle(TB)[..., :-500]
-        LR_phase = torch.angle(LR)[..., :-500]
-
-        magnitude = torch.cat([TB_magnitude, LR_magnitude], dim=1)
-        phase = torch.cat([TB_phase, LR_phase], dim=1)
-        magnitude = magnitude.reshape(magnitude.size(0), 2000, -1)
-        phase = phase.reshape(phase.size(0), 2000, -1)
-
-        magnitude = self.magnitude_proj_norm(self.magnitude_proj(magnitude[0]))
-        phase = self.phase_proj_norm(self.phase_proj(phase[0]))
-        magnitude = magnitude + self.magnitude_pos_embed
-        phase = phase + self.phase_pos_embed
-
-        magnitude_phase = torch.cat((magnitude, phase), dim=2)
-        x = self.encoder(magnitude_phase)
-        x = self.conv(x.unsqueeze(0))
-
-        x = x.view(1, -1)
-        return self.classification_head(x)
-
-class arch63(nn.Module):
-
-    def __init__(self):
-        super(arch63, self).__init__()
-
-        self.magnitude_proj = nn.Linear(19500, 1950)
-        self.magnitude_proj_norm = nn.LayerNorm(1950)
-        self.phase_proj = nn.Linear(19500, 1950)
-        self.phase_proj_norm = nn.LayerNorm(1950)
-        self.pos_embed = nn.Parameter(torch.randn(4, 2, 500, 1950))
-        self.initial = nn.Parameter(torch.randn(1950, 1, 500))
-
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-        )
-        self.conv2 = nn.Sequential(
-            nn.Conv2d(in_channels=4, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.Conv2d(in_channels=3, out_channels=2, kernel_size=1, stride=1),
-            nn.BatchNorm2d(2),
-            nn.Conv2d(in_channels=2, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1)
-        )
-
-        layer = nn.TransformerDecoderLayer(d_model=500, nhead=5, activation='gelu')
-        self.decoder = nn.TransformerDecoder(layer, num_layers=5)
-
-        self.conv3 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.GELU(),
-            nn.Dropout(0.1),
-        )
-
-        self.classification_head = nn.Sequential(
-            nn.Linear(15372, 1537),
-            nn.LayerNorm(1537),
-            nn.GELU(),
-            nn.Linear(1537, 153),
-            nn.LayerNorm(153),
-            nn.GELU(),
-            nn.Linear(153, 15),
-            nn.LayerNorm(15),
-            nn.GELU(),
-            nn.Linear(15, 5)
-        )
-
-    def forward(self, TB, LR):
-        T, B, L, R = TB[0][:, :-500], TB[1][:, :-500], LR[0][:, :-500], LR[1][:, :-500]
-        TM, BM, LM, RM = torch.abs(T), torch.abs(B), torch.abs(L), torch.abs(R)
-        TP, BP, LP, RP = torch.angle(T), torch.angle(B), torch.angle(L), torch.angle(R)
-
-        TM = self.magnitude_proj_norm(self.magnitude_proj(TM))
-        BM = self.magnitude_proj_norm(self.magnitude_proj(BM))
-        LM = self.magnitude_proj_norm(self.magnitude_proj(LM))
-        RM = self.magnitude_proj_norm(self.magnitude_proj(RM))
-        TP = self.phase_proj_norm(self.phase_proj(TP))
-        BP = self.phase_proj_norm(self.phase_proj(BP))
-        LP = self.phase_proj_norm(self.phase_proj(LP))
-        RP = self.phase_proj_norm(self.phase_proj(RP))
-
-        T, B, L, R = torch.stack([TM, TP]), torch.stack([BM, BP]), torch.stack([LM, LP]), torch.stack([RM, RP])
-        x = torch.stack([T, B, L, R])
-        x += self.pos_embed
-        x = self.conv1(x).squeeze(1)
-        x = self.conv2(x.unsqueeze(0)).squeeze(0)
-
-        x = x.permute(2, 0, 1)
-        x = self.decoder(x, self.initial)
-        x = x.permute(1, 2, 0)
-
-        x = self.conv3(x.unsqueeze(0))
-
-        x = x.view(1, -1)
-        return self.classification_head(x)
     
 class arch65(nn.Module):
 
@@ -1159,3 +1006,502 @@ class arch67(nn.Module):
         
         x = x.view(1, -1)
         return self.classification_head(x)
+    
+class arch68(nn.Module):
+
+    def __init__(self):
+        super(arch68, self).__init__()
+
+        self.conv_T = nn.Sequential(
+            nn.BatchNorm2d(1),
+            nn.Conv2d(in_channels=1, out_channels=128, kernel_size=500, stride=500),
+            nn.BatchNorm2d(128),
+        )
+        self.conv_B = nn.Sequential(
+            nn.BatchNorm2d(1),
+            nn.Conv2d(in_channels=1, out_channels=128, kernel_size=500, stride=500),
+            nn.BatchNorm2d(128),
+        )
+        self.conv_L = nn.Sequential(
+            nn.BatchNorm2d(1),
+            nn.Conv2d(in_channels=1, out_channels=128, kernel_size=500, stride=500),
+            nn.BatchNorm2d(128),
+        )
+        self.conv_R = nn.Sequential(
+            nn.BatchNorm2d(1),
+            nn.Conv2d(in_channels=1, out_channels=128, kernel_size=500, stride=500),
+            nn.BatchNorm2d(128),
+        )
+
+        self.pos_emb = nn.Parameter(torch.randn(160, 128))
+
+        magnitude_layer = nn.TransformerEncoderLayer(d_model=128, nhead=4)
+        self.encoder = nn.TransformerEncoder(magnitude_layer, num_layers=3)
+
+        self.classification_head = nn.Sequential(
+            nn.Linear(20480, 10240),
+            nn.LayerNorm(10240),
+            nn.ReLU(),
+            nn.Linear(10240, 5120),
+            nn.LayerNorm(5120),
+            nn.ReLU(),
+            nn.Linear(5120, 2560),
+            nn.LayerNorm(2560),
+            nn.ReLU(),
+            nn.Linear(2560, 1280),
+            nn.LayerNorm(1280),
+            nn.ReLU(),
+            nn.Linear(1280, 640),
+            nn.LayerNorm(640),
+            nn.ReLU(),
+            nn.Linear(640, 320),
+            nn.LayerNorm(320),
+            nn.ReLU(),
+            nn.Linear(320, 160),
+            nn.LayerNorm(160),
+            nn.ReLU(),
+            nn.Linear(160, 80),
+            nn.LayerNorm(80),
+            nn.ReLU(),
+            nn.Linear(80, 40),
+            nn.LayerNorm(40),
+            nn.ReLU(),
+            nn.Linear(40, 20),
+            nn.LayerNorm(20),
+            nn.ReLU(),
+            nn.Linear(20, 5)
+        )
+
+    def forward(self, TB, LR):
+        T, B, L, R = TB[0].real, TB[1].real, LR[0].real, LR[1].real
+        T, B, L, R = self.conv_T(T.unsqueeze(0).unsqueeze(0)), self.conv_B(B.unsqueeze(0).unsqueeze(0)), self.conv_L(L.unsqueeze(0).unsqueeze(0)), self.conv_R(R.unsqueeze(0).unsqueeze(0)) 
+
+        x = torch.cat([T.squeeze().T, B.squeeze().T, L.squeeze().T, R.squeeze().T], dim=0)
+        x += self.pos_emb
+        x = x.unsqueeze(0)
+        x = self.encoder(x)
+
+        x = x.view(1, -1)
+        output = self.classification_head(x)
+
+        return output
+    
+class arch69(nn.Module):
+
+    def __init__(self):
+        super(arch69, self).__init__()
+
+        self.conv_TM = nn.Sequential(
+            nn.BatchNorm2d(1),
+            nn.Conv2d(in_channels=1, out_channels=128, kernel_size=500, stride=500),
+            nn.BatchNorm2d(128),
+        )
+        self.conv_BM = nn.Sequential(
+            nn.BatchNorm2d(1),
+            nn.Conv2d(in_channels=1, out_channels=128, kernel_size=500, stride=500),
+            nn.BatchNorm2d(128),
+        )
+        self.conv_LM = nn.Sequential(
+            nn.BatchNorm2d(1),
+            nn.Conv2d(in_channels=1, out_channels=128, kernel_size=500, stride=500),
+            nn.BatchNorm2d(128),
+        )
+        self.conv_RM = nn.Sequential(
+            nn.BatchNorm2d(1),
+            nn.Conv2d(in_channels=1, out_channels=128, kernel_size=500, stride=500),
+            nn.BatchNorm2d(128),
+        )
+        self.conv_TP = nn.Sequential(
+            nn.BatchNorm2d(1),
+            nn.Conv2d(in_channels=1, out_channels=128, kernel_size=500, stride=500),
+            nn.BatchNorm2d(128),
+        )
+        self.conv_BP = nn.Sequential(
+            nn.BatchNorm2d(1),
+            nn.Conv2d(in_channels=1, out_channels=128, kernel_size=500, stride=500),
+            nn.BatchNorm2d(128),
+        )
+        self.conv_LP = nn.Sequential(
+            nn.BatchNorm2d(1),
+            nn.Conv2d(in_channels=1, out_channels=128, kernel_size=500, stride=500),
+            nn.BatchNorm2d(128),
+        )
+        self.conv_RP = nn.Sequential(
+            nn.BatchNorm2d(1),
+            nn.Conv2d(in_channels=1, out_channels=128, kernel_size=500, stride=500),
+            nn.BatchNorm2d(128),
+        )
+        self.conv_T = nn.Sequential(
+            nn.BatchNorm2d(2),
+            nn.Conv2d(in_channels=2, out_channels=1, kernel_size=1, stride=1),
+            nn.BatchNorm2d(1),
+        )
+        self.conv_B = nn.Sequential(
+            nn.BatchNorm2d(2),
+            nn.Conv2d(in_channels=2, out_channels=1, kernel_size=1, stride=1),
+            nn.BatchNorm2d(1),
+        )
+        self.conv_L = nn.Sequential(
+            nn.BatchNorm2d(2),
+            nn.Conv2d(in_channels=2, out_channels=1, kernel_size=1, stride=1),
+            nn.BatchNorm2d(1),
+        )
+        self.conv_R = nn.Sequential(
+            nn.BatchNorm2d(2),
+            nn.Conv2d(in_channels=2, out_channels=1, kernel_size=1, stride=1),
+            nn.BatchNorm2d(1),
+        )
+
+        self.pos_emb = nn.Parameter(torch.randn(160, 128))
+
+        magnitude_layer = nn.TransformerEncoderLayer(d_model=128, nhead=4)
+        self.encoder = nn.TransformerEncoder(magnitude_layer, num_layers=3)
+
+        self.classification_head = nn.Sequential(
+            nn.Linear(20480, 10240),
+            nn.LayerNorm(10240),
+            nn.ReLU(),
+            nn.Linear(10240, 5120),
+            nn.LayerNorm(5120),
+            nn.ReLU(),
+            nn.Linear(5120, 2560),
+            nn.LayerNorm(2560),
+            nn.ReLU(),
+            nn.Linear(2560, 1280),
+            nn.LayerNorm(1280),
+            nn.ReLU(),
+            nn.Linear(1280, 640),
+            nn.LayerNorm(640),
+            nn.ReLU(),
+            nn.Linear(640, 320),
+            nn.LayerNorm(320),
+            nn.ReLU(),
+            nn.Linear(320, 160),
+            nn.LayerNorm(160),
+            nn.ReLU(),
+            nn.Linear(160, 80),
+            nn.LayerNorm(80),
+            nn.ReLU(),
+            nn.Linear(80, 40),
+            nn.LayerNorm(40),
+            nn.ReLU(),
+            nn.Linear(40, 20),
+            nn.LayerNorm(20),
+            nn.ReLU(),
+            nn.Linear(20, 5)
+        )
+
+    def forward(self, TB, LR):
+        TM, BM, LM, RM = torch.abs(TB[0]), torch.abs(TB[1]), torch.abs(LR[0]), torch.abs(LR[1])
+        TP, BP, LP, RP = torch.angle(TB[0]), torch.angle(TB[1]), torch.angle(LR[0]), torch.angle(LR[1])
+        TM, BM, LM, RM = self.conv_TM(TM.unsqueeze(0).unsqueeze(0)), self.conv_BM(BM.unsqueeze(0).unsqueeze(0)), self.conv_LM(LM.unsqueeze(0).unsqueeze(0)), self.conv_RM(RM.unsqueeze(0).unsqueeze(0)) 
+        TP, BP, LP, RP = self.conv_TP(TP.unsqueeze(0).unsqueeze(0)), self.conv_BP(BP.unsqueeze(0).unsqueeze(0)), self.conv_LP(LP.unsqueeze(0).unsqueeze(0)), self.conv_RP(RP.unsqueeze(0).unsqueeze(0)) 
+
+        T, B, L, R = torch.cat([TM, TP], dim=0).squeeze().unsqueeze(0), torch.cat([BM, BP], dim=0).squeeze().unsqueeze(0), torch.cat([RM, RP], dim=0).squeeze().unsqueeze(0), torch.cat([LM, LP], dim=0).squeeze().unsqueeze(0)
+        T, B, L, R = self.conv_T(T), self.conv_B(B), self.conv_L(L), self.conv_R(R)
+        x = torch.cat([T.squeeze().T, B.squeeze().T, L.squeeze().T, R.squeeze().T], dim=0)
+        x += self.pos_emb
+        x = x.unsqueeze(0)
+        x = self.encoder(x)
+
+        x = x.view(1, -1)
+        output = self.classification_head(x)
+
+        return output
+    
+
+#################################
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super().__init__()
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        return x + self.pe[:x.size(0)]
+
+class arch7(nn.Module):
+
+    def __init__(self):
+        super(arch7, self).__init__()
+
+        self.conv= nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=2, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(2),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=2, out_channels=4, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(4),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=4, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(8),
+            nn.PReLU(),
+
+            nn.Conv2d(in_channels=8, out_channels=4, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(4),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=4, out_channels=2, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(2),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=2, out_channels=1, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+
+            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+        )
+        self.head = nn.Sequential(
+            nn.Linear(10016, 1001),
+            nn.LayerNorm(1001),
+            nn.ReLU(),
+            nn.Linear(1001, 100),
+            nn.LayerNorm(100),
+            nn.ReLU(),
+            nn.Linear(100, 5),
+        )
+
+    def forward(self, H, V):
+        H, V = H.real, V.T.real
+        x = torch.cat([H, V], dim=0)
+        x = (x - x.mean()) / x.std()
+        x = x.unsqueeze(0).unsqueeze(0)
+        x = self.conv(x)
+        x = x.view(x.size(0), -1)
+        return self.head(x)
+
+class arch71(nn.Module):
+
+    def __init__(self):
+        super(arch71, self).__init__()
+
+        self.conv_H = nn.Sequential(
+            nn.Conv1d(in_channels=20000, out_channels=5000, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(5000),
+            nn.PReLU(),
+            nn.Conv1d(in_channels=5000, out_channels=2500, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(2500),
+            nn.PReLU(),
+            nn.Conv1d(in_channels=2500, out_channels=1250, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(1250),
+            nn.PReLU(),
+            nn.Conv1d(in_channels=1250, out_channels=1000, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(1000),
+            nn.PReLU(),
+        )
+        self.conv_V = nn.Sequential(
+            nn.Conv1d(in_channels=20000, out_channels=5000, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(5000),
+            nn.PReLU(),
+            nn.Conv1d(in_channels=5000, out_channels=2500, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(2500),
+            nn.PReLU(),
+            nn.Conv1d(in_channels=2500, out_channels=1250, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(1250),
+            nn.PReLU(),
+            nn.Conv1d(in_channels=1250, out_channels=1000, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(1000),
+            nn.PReLU(),
+        )
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(8),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=8, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=32, out_channels=128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=128, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=32, out_channels=8, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(8),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=8, out_channels=1, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+        )
+        self.head = nn.Sequential(
+            nn.Linear(125**2, 64**2),
+            nn.LayerNorm(64**2),
+            nn.PReLU(),
+            nn.Linear(64**2, 32**2),
+            nn.LayerNorm(32**2),
+            nn.PReLU(),
+            nn.Linear(32**2, 16**2),
+            nn.LayerNorm(16**2),
+            nn.PReLU(),
+            nn.Linear(16**2, 8**2),
+            nn.LayerNorm(8**2),
+            nn.PReLU(),
+            nn.Linear(8**2, 4**2),
+            nn.LayerNorm(4**2),
+            nn.PReLU(),
+            nn.Linear(4**2, 5),
+        )
+
+    def forward(self, H, V):
+        H, V = H.T.real, V.real
+        H, V = self.conv_H(H.unsqueeze(0)), self.conv_V(V.unsqueeze(0))
+        x = torch.cat([H, V], dim=0).unsqueeze(0)
+        x = self.conv(x)
+        x = x.view(x.size(0), -1)
+        return self.head(x)
+    
+class arch72(nn.Module):
+
+    def __init__(self):
+        super(arch72, self).__init__()
+
+        self.conv_H = nn.Sequential(
+            nn.Conv1d(in_channels=1000, out_channels=1000, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm1d(1000),
+            nn.PReLU(),
+            nn.Conv1d(in_channels=1000, out_channels=1000, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm1d(1000),
+            nn.PReLU(),
+            nn.Conv1d(in_channels=1000, out_channels=1000, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm1d(1000),
+            nn.PReLU(),
+            nn.Conv1d(in_channels=1000, out_channels=1000, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm1d(1000),
+            nn.PReLU(),
+        )
+        self.conv_V = nn.Sequential(
+            nn.Conv1d(in_channels=1000, out_channels=1000, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm1d(1000),
+            nn.PReLU(),
+            nn.Conv1d(in_channels=1000, out_channels=1000, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm1d(1000),
+            nn.PReLU(),
+            nn.Conv1d(in_channels=1000, out_channels=1000, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm1d(1000),
+            nn.PReLU(),
+            nn.Conv1d(in_channels=1000, out_channels=1000, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm1d(1000),
+            nn.PReLU(),
+        )
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(8),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=8, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=32, out_channels=128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(256),
+            nn.PReLU(),
+
+            nn.Conv2d(in_channels=256, out_channels=128, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=128, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=32, out_channels=8, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(8),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=8, out_channels=1, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+        )
+        self.head = nn.Sequential(
+            nn.Linear(4977, 497),
+            nn.LayerNorm(497),
+            nn.PReLU(),
+            nn.Linear(497, 49),
+            nn.LayerNorm(49),
+            nn.PReLU(),
+            nn.Linear(49, 5),
+        )
+
+    def normalize(self, H, V):
+        C = torch.cat((H.flatten(), V.flatten()), dim=0)
+        H_normalized = (H - C.mean()) / C.std()
+        V_normalized = (V - C.mean()) / C.std()
+        return H_normalized, V_normalized
+
+    def forward(self, H, V):
+        H, V = H.real, V.T.real
+        H, V = self.normalize(H, V)
+        H, V = self.conv_H(H.unsqueeze(0)), self.conv_V(V.unsqueeze(0))
+        x = torch.cat([H, V], dim=0).unsqueeze(0)
+        x = self.conv(x)
+        x = x.view(x.size(0), -1)
+        return self.head(x)
+    
+class arch73(nn.Module):
+
+    def __init__(self):
+        super(arch73, self).__init__()
+
+        self.proj_H = nn.Sequential(
+            nn.Linear(62500, 6250),
+            nn.LayerNorm(6250),
+        )
+        self.proj_V = nn.Sequential(
+            nn.Linear(62500, 6250),
+            nn.LayerNorm(6250),
+        )
+        self.pos_emb1 = nn.Parameter(torch.randn(640, 1))
+        self.proj = nn.Sequential(
+            nn.Linear(6250, 625),
+            nn.LayerNorm(625),
+        )
+        self.pos_emb2 = nn.Parameter(torch.randn(640, 1))
+
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=8, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(8),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=8, out_channels=64, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=64, out_channels=8, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(8),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=8, out_channels=1, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(1),
+            nn.ReLU(),
+        )
+        self.head = nn.Sequential(
+            nn.Linear(40**2, 16**2),
+            nn.LayerNorm(16**2),
+            nn.PReLU(),
+            nn.Linear(16**2, 4**2),
+            nn.LayerNorm(4**2),
+            nn.PReLU(),
+            nn.Linear(4**2, 5),
+        )
+
+    def normalize(self, H, V):
+        C = torch.cat((H.flatten(), V.flatten()), dim=0)
+        H_normalized = (H - C.mean()) / C.std()
+        V_normalized = (V - C.mean()) / C.std()
+        return H_normalized, V_normalized
+
+    def forward(self, H, V):
+        H, V = H.real, V.real
+        H, V = self.normalize(H, V)
+        H, V = H.reshape(-1, 250, 250), V.reshape(-1, 250, 250)
+        H, V = self.proj_H(H.view(H.size(0), -1)), self.proj_V(H.view(H.size(0), -1))
+        x = torch.cat([H, V], dim=0) + self.pos_emb1
+        x = self.proj(x) + self.pos_emb2
+        x = self.conv(x.unsqueeze(0).unsqueeze(0))
+        x = x.view(x.size(0), -1)
+        return self.head(x)

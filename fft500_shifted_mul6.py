@@ -58,9 +58,9 @@ set_seed(42)
 
 def fft_transform(batch_data, device):
     image_path = batch_data['image'][0]
-    TB = torch.tensor(np.load(image_path)['array1'])
-    LR = torch.tensor(np.load(image_path)['array2'])
-    return TB.to(device), LR.to(device), batch_data['label'].to(device)
+    H = torch.tensor(np.load(image_path)['array1'])
+    V = torch.tensor(np.load(image_path)['array2'])
+    return H.to(device), V.to(device), batch_data['label'].to(device)
 
 def train_epoch(model, loader, optimizer, scaler, epoch, args):
     """One train epoch over the dataset"""
@@ -338,7 +338,7 @@ def main_worker(gpu, args):
     # if args.rank == 1:
     #     print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
    
-    model = arch66()
+    model = arch7()
 
     best_acc = 0
     start_epoch = 0
