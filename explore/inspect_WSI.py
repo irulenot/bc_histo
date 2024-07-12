@@ -20,6 +20,7 @@ import shutil
 import torch
 import torchvision.transforms.functional as TF
 from PIL import Image
+import torchvision.transforms as transforms
 
 input_dir = '/data/breast-cancer/PANDA/train_images/'
 output_dir = 'outputs/inspect/'
@@ -28,98 +29,217 @@ if not os.path.exists(output_dir):
 
 def process_tiff(tiff_file):
     output_file = os.path.join(output_dir, tiff_file)[:-5]
-    # if os.path.exists(f'{output_file}.npz'):
-    #     return 0
+    if os.path.exists(f'{output_file}.npz'):
+        return 0
 
     loader = LoadImaged(keys=["image"], reader=WSIReader, backend="cucim", dtype=np.uint8, level=0, image_only=True)
     image_dict = loader({"image": os.path.join(input_dir, tiff_file)})
     image = image_dict["image"]
-    image = image.squeeze().numpy()
 
-    if image.shape[1] > 20000 or image.shape[2] > 20000:
-        print('FAIL')
-        return
+    C, H, W = image.shape
+    if W > H:
+        image = image.permute(0, 2, 1)
+    C, H, W = image.shape
+    if W < H:
+        short_image = image.permute(0, 2, 1)
 
-    target_size = (20000, 20000) # pad don't resize, w 255?
-    pad_height = target_size[0] - image.shape[1]
-    pad_width = target_size[1] - image.shape[2]
-    padded_image = np.pad(image.transpose(1, 2, 0), ((0, 0), (0, 0), (0, 0)), mode='constant', constant_values=255)
-    
-    save_path = os.path.join(output_dir, f'padded_image.jpg')
-    cv2.imwrite(save_path, padded_image)
-    
-    gray_image = cv2.cvtColor(padded_image, cv2.COLOR_BGR2GRAY)
+    transform = transforms.ToPILImage()
+    # img = transform(image)
+    # img.save('outputs/inspect/img.png')
+    # img = transform(short_image)
+    # img.save('outputs/inspect/short_img.png')
 
-    save_path = os.path.join(output_dir, f'gray_image.jpg')
-    cv2.imwrite(save_path, gray_image)
+    fft_img = torch.fft.fft2(image)
+    fft_img_shifted = torch.fft.fftshift(fft_img)
+    short_fft_img = torch.fft.fft2(image)
+    short_fft_img_shifted = torch.fft.fftshift(fft_img)
+    # img = transform(fft_img.real)
+    # img.save('outputs/inspect/fft_img.png')
+    # img = transform(fft_img_shifted.real)
+    # img.save('outputs/inspect/fft_img_shifted.png')
 
-    resized_gray = cv2.resize(gray_image, (5000, 5000), interpolation=cv2.INTER_CUBIC)
-    save_path = os.path.join(output_dir, f'resized_gray_image.jpg')
-    cv2.imwrite(save_path, resized_gray)
+    # inv_fft_img = torch.fft.ifft2(fft_img)
+    # inv_fft_img_shifted = torch.fft.ifft2(torch.fft.ifftshift(fft_img_shifted))
+    # img = transform(inv_fft_img.real)
+    # img.save('outputs/inspect/inv_inv_fft_img.png')
+    # img = transform(inv_fft_img_shifted.real)
+    # img.save('outputs/inspect/inv_inv_fft_img_shifted.png')    
 
-    gray_image_tensor = torch.tensor(gray_image, dtype=torch.float32)
-    fft_img = torch.fft.fft2(gray_image_tensor, dim=(-2, -1))
-    fft_img = torch.fft.fftshift(fft_img, dim=(-2, -1))
+    crop_sizes = [1000, 2000]
 
-    rev_img = torch.fft.ifftshift(fft_img, dim=(-2, -1))
-    rev_img = torch.fft.ifft2(rev_img, dim=(-2, -1))
-    rev_img = rev_img.squeeze().cpu().numpy()
-    pil_image = Image.fromarray(rev_img.astype('uint8'))
-    save_path = os.path.join(output_dir, f'rev_img.jpg')
-    pil_image.save(save_path)
-
-    crop_sizes = [1000, 2000, 4000, 6000, 7680]
     for crop_size in crop_sizes:
-        h, w = fft_img.shape[-2], fft_img.shape[-1]
+        image = fft_img
+        h = image.shape[1]
         start_h = h // 2 - crop_size // 2
-        start_w = w // 2 - crop_size // 2
-        cropped_fft_img = fft_img[start_h:start_h+crop_size, start_w:start_w+crop_size]
-
-        cropped_fft_img = torch.fft.ifft2(torch.fft.ifftshift(cropped_fft_img, dim=(-2, -1)), dim=(-2, -1))
-        cropped_fft_img = cropped_fft_img.squeeze().cpu().numpy()
-        pil_image = Image.fromarray(cropped_fft_img.astype('uint8'))
-        save_path = os.path.join(output_dir, f'reconstructed_image_{crop_size}.jpg')
-        pil_image.save(save_path)
-
-    crop_sizes = [1000, 2000, 4000, 6000, 7680]
-    for crop_size in crop_sizes:
-        h, w = fft_img.shape[-2], fft_img.shape[-1]
-        start_h = h // 2 - crop_size // 2
-        start_w = w // 2 - crop_size // 2
-        cropped_fft_img = fft_img.clone()
-        cropped_fft_img[start_h:start_h+crop_size, start_w:start_w+crop_size] = cropped_fft_img[start_h:start_h+crop_size, start_w:start_w+crop_size] * 0
-
-        cropped_fft_img = torch.fft.ifft2(torch.fft.ifftshift(cropped_fft_img, dim=(-2, -1)), dim=(-2, -1))
-        cropped_fft_img = cropped_fft_img.squeeze().cpu().numpy()
-        pil_image = Image.fromarray(cropped_fft_img.astype('uint8'))
-        save_path = os.path.join(output_dir, f'inv_reconstructed_image_{crop_size}.jpg')
-        pil_image.save(save_path)
-
-    crop_sizes = [1000, 2000, 4000, 6000, 7680]
-    for crop_size in crop_sizes:
-        h, w = fft_img.shape[-2], fft_img.shape[-1]
-        start_h = h // 2 - crop_size // 2
-        start_w = w // 2 - crop_size // 2
-        
-        # Create a mask to zero out the middle area
-        mask = torch.zeros(fft_img.shape)
-        mask[:crop_size//4] = 1
-        mask[-crop_size//4:] = 1
-        mask[:, :crop_size//4] = 1
-        mask[:, -crop_size//4:] = 1
-        mask[start_h:start_h+crop_size, start_w:start_w+crop_size] = 1
-        
-        cropped_fft_img = fft_img * mask
-
+        mask = torch.zeros(image.shape)
+        mask[:, start_h:start_h+crop_size, :] = 1
+        image = image * mask
         # Perform inverse FFT and convert to numpy array
-        cropped_fft_img = torch.fft.ifft2(torch.fft.ifftshift(cropped_fft_img, dim=(-2, -1)), dim=(-2, -1))
-        cropped_fft_img = cropped_fft_img.squeeze().cpu().numpy()
-        
-        # Convert to PIL image and save
-        pil_image = Image.fromarray(cropped_fft_img.astype('uint8'))
-        save_path = os.path.join(output_dir, f'mid_reconstructed_image_{crop_size}.jpg')
-        pil_image.save(save_path)
+        image = torch.fft.ifft2(image)
+        img = transform(image.real)
+        img.save(f'outputs/inspect/cropped_image_{crop_size}.png')
 
+    for crop_size in crop_sizes:
+        image = fft_img_shifted
+        h = image.shape[1]
+        start_h = h // 2 - crop_size // 2
+        mask = torch.zeros(image.shape)
+        mask[:, start_h:start_h+crop_size, :] = 1
+        image = image * mask
+        # Perform inverse FFT and convert to numpy array
+        image = torch.fft.ifft2(torch.fft.ifftshift((image)))
+        img = transform(image.real)
+        img.save(f'outputs/inspect/cropped_shifted_image_{crop_size}.png')
+
+    for crop_size in crop_sizes:
+        image = short_fft_img
+        h = image.shape[1]
+        start_h = h // 2 - crop_size // 2
+        mask = torch.zeros(image.shape)
+        mask[:, start_h:start_h+crop_size, :] = 1
+        image = image * mask
+        # Perform inverse FFT and convert to numpy array
+        image = torch.fft.ifft2(image)
+        img = transform(image.real)
+        img.save(f'outputs/inspect/short_cropped_image_{crop_size}.png')
+
+    for crop_size in crop_sizes:
+        image = short_fft_img_shifted
+        h = image.shape[1]
+        start_h = h // 2 - crop_size // 2
+        mask = torch.zeros(image.shape)
+        mask[:, start_h:start_h+crop_size, :] = 1
+        image = image * mask
+        # Perform inverse FFT and convert to numpy array
+        image = torch.fft.ifft2(torch.fft.ifftshift(image))
+        img = transform(image.real)
+        img.save(f'outputs/inspect/short_cropped_shifted_image_{crop_size}.png')
+
+# ########### WIDTH
+
+    for crop_size in crop_sizes:
+        image = fft_img
+        h = image.shape[2]
+        start_h = h // 2 - crop_size // 2
+        mask = torch.zeros(image.shape)
+        mask[:, :, start_h:start_h+crop_size] = 1
+        image = image * mask
+        # Perform inverse FFT and convert to numpy array
+        image = torch.fft.ifft2(image)
+        img = transform(image.real)
+        img.save(f'outputs/inspect/width_cropped_image_{crop_size}.png')
+
+    for crop_size in crop_sizes:
+        image = fft_img_shifted
+        h = image.shape[2]
+        mask = torch.zeros(image.shape)
+        mask[:, :, start_h:start_h+crop_size] = 1
+        image = image * mask
+        # Perform inverse FFT and convert to numpy array
+        image = torch.fft.ifft2(torch.fft.ifftshift(image))
+        img = transform(image.real)
+        img.save(f'outputs/inspect/width_cropped_shifted_image_{crop_size}.png')
+
+    for crop_size in crop_sizes:
+        image = short_fft_img
+        h = image.shape[2]
+        mask = torch.zeros(image.shape)
+        mask[:, :, start_h:start_h+crop_size] = 1
+        image = image * mask
+        # Perform inverse FFT and convert to numpy array
+        image = torch.fft.ifft2(image)
+        img = transform(image.real)
+        img.save(f'outputs/inspect/width_short_cropped_image_{crop_size}.png')
+
+    for crop_size in crop_sizes:
+        image = short_fft_img_shifted
+        h = image.shape[2]
+        mask = torch.zeros(image.shape)
+        mask[:, :, start_h:start_h+crop_size] = 1
+        image = image * mask
+        # Perform inverse FFT and convert to numpy array
+        image = torch.fft.ifft2(torch.fft.ifftshift(image))
+        img = transform(image.real)
+        # img.save(f'outputs/inspect/width_short_cropped_shifted_image_{crop_size}.png')
+
+################## Square
+    for crop_size in crop_sizes:
+        image = short_fft_img
+        h, w = image.shape[1], image.shape[2]
+        start_h, start_w = h // 2 - crop_size // 2, w // 2 - crop_size // 2
+        mask = torch.zeros(image.shape)
+        mask[:, start_h:start_h+crop_size, start_w:start_w+crop_size] = 1
+        image = image * mask
+        # Perform inverse FFT and convert to numpy array
+        image = torch.fft.ifft2(image)
+        img = transform(image.real)
+        img.save(f'outputs/inspect/square_short_cropped_image_{crop_size}.png')
+
+    for crop_size in crop_sizes:
+        image = short_fft_img_shifted
+        h, w = image.shape[1], image.shape[2]
+        start_h, start_w = h // 2 - crop_size // 2, w // 2 - crop_size // 2
+        mask = torch.zeros(image.shape)
+        mask[:, start_h:start_h+crop_size, start_w:start_w+crop_size] = 1
+        image = image * mask        # Perform inverse FFT and convert to numpy array
+        image = torch.fft.ifft2(torch.fft.ifftshift(image))
+        img = transform(image.real)
+        img.save(f'outputs/inspect/square_short_cropped_shifted_image_{crop_size}.png')
+
+    for crop_size in crop_sizes:
+        image = short_fft_img
+
+        c, h, w = image.size()
+        half_h, half_w = h // 2, w // 2
+        # Create an empty image with the same size
+        inverted_image = torch.empty_like(image)
+        for channel in range(c):
+            # Top-left to center
+            inverted_image[channel, half_h:, half_w:] = image[channel, :half_h, :half_w]
+            # Top-right to bottom-left
+            inverted_image[channel, half_h:, :half_w] = image[channel, :half_h, half_w:]
+            # Bottom-left to top-right
+            inverted_image[channel, :half_h, half_w:] = image[channel, half_h:, :half_w]
+            # Bottom-right to top-left
+            inverted_image[channel, :half_h, :half_w] = image[channel, half_h:, half_w:]
+        image = inverted_image
+
+        h, w = image.shape[1], image.shape[2]
+        start_h, start_w = h // 2 - crop_size // 2, w // 2 - crop_size // 2
+        mask = torch.zeros(image.shape)
+        mask[:, start_h:start_h+crop_size, start_w:start_w+crop_size] = 1
+        image = image * mask
+        # Perform inverse FFT and convert to numpy array
+        image = torch.fft.ifft2(image)
+        img = transform(image.real)
+        img.save(f'outputs/inspect/inv_square_short_cropped_image_{crop_size}.png')
+
+    for crop_size in crop_sizes:
+        image = short_fft_img_shifted
+
+        c, h, w = image.size()
+        half_h, half_w = h // 2, w // 2
+        # Create an empty image with the same size
+        inverted_image = torch.empty_like(image)
+        for channel in range(c):
+            # Top-left to center
+            inverted_image[channel, half_h:, half_w:] = image[channel, :half_h, :half_w]
+            # Top-right to bottom-left
+            inverted_image[channel, half_h:, :half_w] = image[channel, :half_h, half_w:]
+            # Bottom-left to top-right
+            inverted_image[channel, :half_h, half_w:] = image[channel, half_h:, :half_w]
+            # Bottom-right to top-left
+            inverted_image[channel, :half_h, :half_w] = image[channel, half_h:, half_w:]
+        image = inverted_image
+
+        h, w = image.shape[1], image.shape[2]
+        start_h, start_w = h // 2 - crop_size // 2, w // 2 - crop_size // 2
+        mask = torch.zeros(image.shape)
+        mask[:, start_h:start_h+crop_size, start_w:start_w+crop_size] = 1
+        image = image * mask        # Perform inverse FFT and convert to numpy array
+        image = torch.fft.ifft2(torch.fft.ifftshift(image))
+        img = transform(image.real)
+        img.save(f'outputs/inspect/inv_square_short_cropped_shifted_image_{crop_size}.png')
 
 tiff_files = [f for f in os.listdir(input_dir) if f.endswith('.tiff') or f.endswith('.tif')]
 

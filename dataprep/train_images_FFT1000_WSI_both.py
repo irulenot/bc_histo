@@ -20,7 +20,7 @@ import shutil
 import torch.nn.functional as F
 
 input_dir = '/data/breast-cancer/PANDA/train_images/'
-output_dir = '/data/breast-cancer/PANDA/train_images_FFT_WSI_grayscaled2/'
+output_dir = '/data/breast-cancer/PANDA/train_images_FFT1000_WSI_both/'
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
@@ -32,39 +32,19 @@ def process_tiff(tiff_file):
     loader = LoadImaged(keys=["image"], reader=WSIReader, backend="cucim", dtype=np.uint8, level=0, image_only=True)
     image_dict = loader({"image": os.path.join(input_dir, tiff_file)})
     image = image_dict["image"]
-    image = image.squeeze().numpy()
 
-    if image.shape[1] > 20000 or image.shape[2] > 20000:
-        return
+    fft_img = torch.fft.fft2(image)
+    fft_img2 = torch.fft.fftshift(fft_img)
 
-    # target_size = (20000, 20000) # pad don't resize, w 255?
-    # pad_height = target_size[0] - image.shape[1]
-    # pad_width = target_size[1] - image.shape[2]
-    padded_image = np.pad(image.transpose(1, 2, 0), ((0, 0), (0, 0), (0, 0)), mode='constant', constant_values=255)
-    gray_image = cv2.cvtColor(padded_image, cv2.COLOR_BGR2GRAY)
-    gray_image_tensor = torch.tensor(gray_image, dtype=torch.float32)
-    fft_img = torch.fft.fft2(gray_image_tensor, dim=(-2, -1))
-
-    # mask = torch.zeros(fft_img.shape)
-    # crop_size = 2000
-    # quarter = crop_size//4
-    # mask[:quarter, :] = 255
-    # mask[-quarter:, :] = 255
-    # mask[:, -quarter:] = 255
-    # mask[:, :quarter] = 255
-
-    crop_size = 2000
-    quarter = crop_size//4
-    Top = fft_img[:quarter, :]
-    Bottom = fft_img[-quarter:, :]
-    Right = fft_img[:, -quarter:]
-    Left = fft_img[:, :quarter]
-    # Apply padding only along dimension 1
-    TB = torch.stack([Top, Bottom])
-    LR = torch.stack([Left, Right])
+    crop_size = 1000
+    h, w = fft_img.shape[-2], fft_img.shape[-1]
+    start_h, start_w = h // 2 - crop_size, w // 2 - crop_size // 2
     
-    np.savez_compressed(f'{output_file}_TB.npz', TB.numpy())
-    np.savez_compressed(f'{output_file}_LR.npz', LR.numpy())
+    fft_img = fft_img[:, start_h:start_h+crop_size, start_w:start_w+crop_size]
+    fft_img2 = fft_img2[:, start_h:start_h+crop_size, start_w:start_w+crop_size]
+    
+    fft_img = torch.stack([fft_img, fft_img2])
+    np.savez_compressed(f'{output_file}', fft_img.numpy())
     return output_file
 
 

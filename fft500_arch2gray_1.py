@@ -41,6 +41,7 @@ warnings.filterwarnings("ignore")
 import random
 from monai.utils import set_determinism
 from models import *
+import gzip
 
 def set_seed(seed):
     random.seed(seed)
@@ -55,24 +56,10 @@ def set_seed(seed):
 # Set a reproducible seed
 set_seed(42)
 
-def fft_transform1(batch_data, device):
-    image = np.load(batch_data['image'][0])['array']
-    image = image.real
-    angle = random.choice([0, 90, 180, 270])
-    if angle == 90:
-        image = np.rot90(image, k=1, axes=(1, 2))
-    elif angle == 180:
-        image = np.rot90(image, k=2, axes=(1, 2))
-    elif angle == 270:
-        image = np.rot90(image, k=3, axes=(1, 2))
-    perm =  np.random.permutation(image.shape[0])
-    image = image[perm]
-    return torch.tensor(image).to(device), batch_data['label'].to(device)
-
-def fft_transform2(batch_data, device):
-    image = np.load(batch_data['image'][0])['array']
-    image = image.real
-    return torch.tensor(image).to(device), batch_data['label'].to(device)
+def fft_transform(batch_data, device):
+    image_path = batch_data['image'][0]
+    image = torch.tensor(np.load(image_path)['arr_0'])
+    return image.to(device), batch_data['label'].to(device)
 
 def train_epoch(model, loader, optimizer, scaler, epoch, args):
     """One train epoch over the dataset"""
@@ -87,12 +74,12 @@ def train_epoch(model, loader, optimizer, scaler, epoch, args):
     loss, acc = 0.0, 0.0
 
     for idx, batch_data in enumerate(loader):
-        data, target = fft_transform1(batch_data, args.rank)
+        image, target = fft_transform(batch_data, args.rank)
 
         optimizer.zero_grad(set_to_none=True)
 
         # with autocast(enabled=args.amp):
-        logits = model(data.unsqueeze(0))
+        logits = model(image)
         loss = criterion(logits, target)
 
         scaler.scale(loss).backward()
@@ -138,11 +125,11 @@ def val_epoch(model, loader, epoch, args, max_tiles=None):
 
     with torch.no_grad():
         for idx, batch_data in enumerate(loader):
-            data, target = fft_transform2(batch_data, args.rank)
+            image, target = fft_transform(batch_data, args.rank)
 
             # with autocast(enabled=args.amp):
                 # if number of instances is not big, we can run inference directly
-            logits = model(data.unsqueeze(0))
+            logits = model(image)
             loss = criterion(logits, target)
 
             pred = logits.sigmoid().sum(1).detach().round()
@@ -183,7 +170,7 @@ def save_checkpoint(model, epoch, args, filename="model.pt", best_acc=0):
 
     filename = os.path.join(args.logdir, filename)
     torch.save(save_dict, filename)
-    print("Saving checkpoint", filename)
+    # print("Saving checkpoint", filename)
 
 
 class LabelEncodeIntegerGraded(MapTransform):
@@ -279,10 +266,6 @@ def main_worker(gpu, args):
         base_dir=args.data_root,
     )
 
-    if args.quick:  # for debugging on a small subset
-        training_list = training_list[:16]
-        validation_list = validation_list[:16]
-
     for i , path in enumerate(training_list):
         training_list[i]['image'] = training_list[i]['image'][:-5] + '.npz'
     for i , path in enumerate(validation_list):
@@ -354,7 +337,7 @@ def main_worker(gpu, args):
     # if args.rank == 3:
     #     print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
    
-    model = arch22()
+    model = arch2gray()
 
     best_acc = 0
     start_epoch = 0
@@ -396,12 +379,12 @@ def main_worker(gpu, args):
     optimizer = torch.optim.AdamW(params, lr=args.optim_lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0)
 
-    if args.logdir is not None and args.rank == 3:
-        writer = SummaryWriter(log_dir=args.logdir)
-        # if args.rank == 3:
-        #     print("Writing Tensorboard logs to ", writer.log_dir)
-    else:
-        writer = None
+    # if args.logdir is not None and args.rank == 3:
+    #     writer = SummaryWriter(log_dir=args.logdir)
+    #     # if args.rank == 3:
+    #     #     print("Writing Tensorboard logs to ", writer.log_dir)
+    # else:
+    #     writer = None
 
     # RUN TRAINING
     n_epochs = args.epochs
@@ -428,12 +411,12 @@ def main_worker(gpu, args):
         #         "time {:.2f}s".format(time.time() - epoch_time),
         #     )
 
-        if args.rank == 3 and writer is not None:
-            writer.add_scalar("train_loss", train_loss, epoch)
-            writer.add_scalar("train_acc", train_acc, epoch)
+        # if args.rank == 3 and writer is not None:
+        #     writer.add_scalar("train_loss", train_loss, epoch)
+        #     writer.add_scalar("train_acc", train_acc, epoch)
 
         b_new_best = False
-        val_acc = 0
+        val_acc, true_acc = 0, 0
         if (epoch + 1) % args.val_every == 0:
             epoch_time = time.time()
             val_loss, val_acc, qwk = val_epoch(model, valid_loader, epoch=epoch, args=args, max_tiles=args.tile_count)
@@ -445,25 +428,26 @@ def main_worker(gpu, args):
                 #     "qwk: {:.4f}".format(qwk),
                 #     "time {:.2f}s".format(time.time() - epoch_time),
                 # )
-                if writer is not None:
-                    writer.add_scalar("val_loss", val_loss, epoch)
-                    writer.add_scalar("val_acc", val_acc, epoch)
-                    writer.add_scalar("val_qwk", qwk, epoch)
+                # if writer is not None:
+                #     writer.add_scalar("val_loss", val_loss, epoch)
+                #     writer.add_scalar("val_acc", val_acc, epoch)
+                #     writer.add_scalar("val_qwk", qwk, epoch)
 
+                true_acc = val_acc
                 val_acc = qwk
 
                 if val_acc > val_acc_max:
-                    print("qwk ({:.6f} --> {:.6f})".format(val_acc_max, val_acc))
+                    print("qwk ({:.4f} --> {:.4f})".format(val_acc_max, val_acc))
+                    print(f'acc {true_acc:.4f}')
                     val_acc_max = val_acc
                     b_new_best = True
                     best_acc = val_acc
                     best_epoch = epoch
 
         if args.rank == 3 and args.logdir is not None:
-            save_checkpoint(model, epoch, args, best_acc=val_acc, filename="model_final.pt")
             if b_new_best:
-                # print("Copying to model.pt new best model!!!!")
-                shutil.copyfile(os.path.join(args.logdir, "model_final.pt"), os.path.join(args.logdir, "model.pt"))
+                file_name = os.path.basename(__file__).split('.')[0]
+                save_checkpoint(model, epoch, args, best_acc=val_acc, filename=f"{file_name}.pt")
 
         scheduler.step()
 
@@ -474,7 +458,7 @@ def main_worker(gpu, args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Multiple Instance Learning (MIL) example of classification from WSI.")
     parser.add_argument(
-        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT500_shifted/", help="path to root folder of images"
+        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT_WSI_grayscaled2/", help="path to root folder of images"
     )
     parser.add_argument("--dataset_json", default=None, type=str, help="path to dataset json file")
 
@@ -492,9 +476,9 @@ def parse_args():
         help="run only inference on the validation set, must specify the checkpoint argument",
     )
 
-    parser.add_argument("--logdir", default=None, help="path to log directory to store Tensorboard logs")
+    parser.add_argument("--logdir", default='weights/', help="path to log directory to store Tensorboard logs")
 
-    parser.add_argument("--epochs", "--max_epochs", default=300, type=int, help="number of training epochs")
+    parser.add_argument("--epochs", "--max_epochs", default=100, type=int, help="number of training epochs")
     parser.add_argument("--batch_size", default=1, type=int, help="batch size, the number of WSI images per gpu")
     parser.add_argument("--optim_lr", default=3e-5, type=float, help="initial learning rate")
 
@@ -518,7 +502,7 @@ def parse_args():
     )
     parser.add_argument("--dist-backend", default="nccl", type=str, help="distributed backend")
 
-    parser.add_argument("--quick", default=False, action="store_true", help="use a small subset of data for debugging")
+    parser.add_argument("--quick", default=True, action="store_true", help="use a small subset of data for debugging")
 
     args = parser.parse_args()
 
@@ -537,9 +521,9 @@ if __name__ == "__main__":
         # download default json datalist
         resource = "https://drive.google.com/uc?id=1L6PtKBlHHyUgTE4rVhRuOLTQKgD4tBRK"
         if args.quick == True:
-            dst = "datalists/datalist_panda_fft_quick.json"
+            dst = "datalists/datalist_panda_fft_quick2.json"
         else:
-            dst = "datalists/datalist_panda_fft.json"
+            dst = "datalists/datalist_panda_fft2.json"
         # if not os.path.exists(dst):
         #     gdown.download(resource, dst, quiet=False)
         args.dataset_json = dst

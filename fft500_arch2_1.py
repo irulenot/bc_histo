@@ -58,9 +58,8 @@ set_seed(42)
 
 def fft_transform(batch_data, device):
     image_path = batch_data['image'][0]
-    TB = torch.tensor(np.load(image_path)['array1'])
-    LR = torch.tensor(np.load(image_path)['array2'])
-    return TB.to(device), LR.to(device), batch_data['label'].to(device)
+    image = torch.tensor(np.load(image_path)['arr_0'])
+    return image.to(device), batch_data['label'].to(device)
 
 def train_epoch(model, loader, optimizer, scaler, epoch, args):
     """One train epoch over the dataset"""
@@ -75,12 +74,12 @@ def train_epoch(model, loader, optimizer, scaler, epoch, args):
     loss, acc = 0.0, 0.0
 
     for idx, batch_data in enumerate(loader):
-        TB, LR, target = fft_transform(batch_data, args.rank)
+        image, target = fft_transform(batch_data, args.rank)
 
         optimizer.zero_grad(set_to_none=True)
 
         # with autocast(enabled=args.amp):
-        logits = model(TB, LR)
+        logits = model(image)
         loss = criterion(logits, target)
 
         scaler.scale(loss).backward()
@@ -126,11 +125,11 @@ def val_epoch(model, loader, epoch, args, max_tiles=None):
 
     with torch.no_grad():
         for idx, batch_data in enumerate(loader):
-            TB, LR, target = fft_transform(batch_data, args.rank)
+            image, target = fft_transform(batch_data, args.rank)
 
             # with autocast(enabled=args.amp):
                 # if number of instances is not big, we can run inference directly
-            logits = model(TB, LR)
+            logits = model(image)
             loss = criterion(logits, target)
 
             pred = logits.sigmoid().sum(1).detach().round()
@@ -338,7 +337,7 @@ def main_worker(gpu, args):
     # if args.rank == 2:
     #     print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
    
-    model = arch73()
+    model = arch21()
 
     best_acc = 0
     start_epoch = 0
