@@ -42,7 +42,9 @@ def process_tiff(tiff_file):
     
     fft_img = fft_img[:, start_h:start_h+crop_size, start_w:start_w+crop_size]
     fft_img2 = fft_img2[:, start_h:start_h+crop_size, start_w:start_w+crop_size]
-    
+    if fft_img.shape[0] != 3 or fft_img.shape[1] != crop_size or fft_img.shape[2] != crop_size:
+        return
+
     fft_img = torch.stack([fft_img, fft_img2])
     np.savez_compressed(f'{output_file}', fft_img.numpy())
     return output_file
