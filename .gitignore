@@ -4,3 +4,7 @@ outputs/
 *.log
 .vscode/
 weights/
+*.png
+*.pt
+*.pth
+*.npz

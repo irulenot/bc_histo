@@ -35,22 +35,27 @@ axes[0, 2].imshow(phase, cmap='gray')
 axes[0, 2].set_title('Phase Spectrum (Unshifted)')
 axes[0, 2].axis('off')
 
-# Magnitude spectrum (shifted)
-axes[1, 0].imshow(np.log1p(magnitude_shifted), cmap='gray')
-axes[1, 0].set_title('Magnitude Spectrum (Shifted)')
+# Original image
+axes[1, 0].imshow(image, cmap='gray')
+axes[1, 0].set_title('Original Image')
 axes[1, 0].axis('off')
 
-# Phase spectrum (shifted)
-axes[1, 1].imshow(phase_shifted, cmap='gray')
-axes[1, 1].set_title('Phase Spectrum (Shifted)')
+# Magnitude spectrum (shifted)
+axes[1, 1].imshow(np.log1p(magnitude_shifted), cmap='gray')
+axes[1, 1].set_title('Magnitude Spectrum (Shifted)')
 axes[1, 1].axis('off')
+
+# Phase spectrum (shifted)
+axes[1, 2].imshow(phase_shifted, cmap='gray')
+axes[1, 2].set_title('Phase Spectrum (Shifted)')
+axes[1, 2].axis('off')
 
 # Demonstrating Hermitian symmetry
 # Let's show the real part of the Fourier transform and its complex conjugate symmetry
-real_part = np.real(F)
-axes[1, 2].imshow(real_part, cmap='gray')
-axes[1, 2].set_title('Real Part of Fourier Transform')
-axes[1, 2].axis('off')
+# real_part = np.real(F)
+# axes[1, 2].imshow(real_part, cmap='gray')
+# axes[1, 2].set_title('Real Part of Fourier Transform')
+# axes[1, 2].axis('off')
 
 # Display the plots
 plt.tight_layout()

@@ -20,7 +20,7 @@ import shutil
 import torch.nn.functional as F
 
 input_dir = '/data/breast-cancer/PANDA/train_images/'
-output_dir = '/data/breast-cancer/PANDA/train_images_FFT2000_WSI/'
+output_dir = '/data/breast-cancer/PANDA/train_images_FFT2000_WSI_both/'
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
@@ -34,15 +34,18 @@ def process_tiff(tiff_file):
     image = image_dict["image"]
 
     fft_img = torch.fft.fft2(image)
+    fft_img2 = torch.fft.fftshift(fft_img)
 
     crop_size = 2000
     h, w = fft_img.shape[-2], fft_img.shape[-1]
     start_h, start_w = h // 2 - crop_size, w // 2 - crop_size // 2
     
     fft_img = fft_img[:, start_h:start_h+crop_size, start_w:start_w+crop_size]
+    fft_img2 = fft_img2[:, start_h:start_h+crop_size, start_w:start_w+crop_size]
     if fft_img.shape[0] != 3 or fft_img.shape[1] != crop_size or fft_img.shape[2] != crop_size:
         return
 
+    fft_img = torch.stack([fft_img, fft_img2])
     np.savez_compressed(f'{output_file}', fft_img.numpy())
     return output_file
 
