@@ -458,7 +458,7 @@ def main_worker(gpu, args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Multiple Instance Learning (MIL) example of classification from WSI.")
     parser.add_argument(
-        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT2000_WSI_both/", help="path to root folder of images"
+        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT2000_WSI_both_centered/", help="path to root folder of images"
     )
     parser.add_argument("--dataset_json", default=None, type=str, help="path to dataset json file")
 
@@ -478,7 +478,7 @@ def parse_args():
 
     parser.add_argument("--logdir", default='weights/', help="path to log directory to store Tensorboard logs")
 
-    parser.add_argument("--epochs", "--max_epochs", default=100, type=int, help="number of training epochs")
+    parser.add_argument("--epochs", "--max_epochs", default=300, type=int, help="number of training epochs")
     parser.add_argument("--batch_size", default=1, type=int, help="batch size, the number of WSI images per gpu")
     parser.add_argument("--optim_lr", default=3e-5, type=float, help="initial learning rate")
 
@@ -521,9 +521,9 @@ if __name__ == "__main__":
         # download default json datalist
         resource = "https://drive.google.com/uc?id=1L6PtKBlHHyUgTE4rVhRuOLTQKgD4tBRK"
         if args.quick == True:
-            dst = "datalists/train_images_FFT2000_WSI_both_quick.json"
+            dst = "datalists/train_images_FFT2000_WSI_both_centered_quick.json"
         else:
-            dst = "datalists/train_images_FFT2000_WSI_both.json"
+            dst = "datalists/train_images_FFT2000_WSI_both_centered.json"
         # if not os.path.exists(dst):
         #     gdown.download(resource, dst, quiet=False)
         args.dataset_json = dst
