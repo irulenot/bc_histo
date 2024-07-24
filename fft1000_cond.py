@@ -339,7 +339,7 @@ def main_worker(gpu, args):
     # if args.rank == 1:
     #     print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
    
-    model = arch1000_cond2()
+    model = arch1000_cond()
 
     best_acc = 0
     start_epoch = 0
@@ -504,7 +504,7 @@ def parse_args():
     )
     parser.add_argument("--dist-backend", default="nccl", type=str, help="distributed backend")
 
-    parser.add_argument("--quick", default=True, action="store_true", help="use a small subset of data for debugging")
+    parser.add_argument("--quick", default=False, action="store_true", help="use a small subset of data for debugging")
 
     args = parser.parse_args()
 
