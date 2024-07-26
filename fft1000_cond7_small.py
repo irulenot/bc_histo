@@ -251,6 +251,10 @@ def main_worker(gpu, args):
             file_name = item['image'][:-5] + '.npz'
             if os.path.exists(args.data_root + file_name):
                 existing_data[split].append(item)
+
+    # existing_data['training'] = existing_data['training'][:100]
+    # existing_data['validation'] = existing_data['validation'][:20]
+
     with open(args.dataset_json + '2', 'w+') as f:
         json.dump(existing_data, f)            
     args.dataset_json = args.dataset_json + '2'
@@ -339,7 +343,7 @@ def main_worker(gpu, args):
     # if args.rank == 2:
     #     print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
    
-    model = arch1000_cond2()
+    model = arch1000_cond7()
 
     best_acc = 0
     start_epoch = 0
