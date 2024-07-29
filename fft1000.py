@@ -42,6 +42,7 @@ import random
 from monai.utils import set_determinism
 from models import *
 import gzip
+import wandb
 
 def set_seed(seed):
     random.seed(seed)
@@ -402,6 +403,7 @@ def main_worker(gpu, args):
 
         epoch_time = time.time()
         train_loss, train_acc = train_epoch(model, train_loader, optimizer, scaler=scaler, epoch=epoch, args=args)
+        wandb.log({"epoch": epoch, "train_loss": train_loss, 'train_acc': train_acc})
 
         # if args.rank == 0:
         #     print(
@@ -448,8 +450,8 @@ def main_worker(gpu, args):
             if b_new_best:
                 file_name = os.path.basename(__file__).split('.')[0]
                 save_checkpoint(model, epoch, args, best_acc=val_acc, filename=f"{file_name}.pt")
-
         scheduler.step()
+        wandb.log({"epoch": epoch, "val_acc": true_acc, 'val_qwk': qwk})
 
     print(best_acc, best_epoch)
     print("ALL DONE")
@@ -527,6 +529,11 @@ if __name__ == "__main__":
         # if not os.path.exists(dst):
         #     gdown.download(resource, dst, quiet=False)
         args.dataset_json = dst
+
+    file_name = os.path.basename(__file__).split('.')[0]
+    if args.quick == True:
+        file_name = file_name + '_quick'
+    wandb.init(project="FFT-MIL", name=f"{file_name}")
 
     if args.distributed:
         ngpus_per_node = torch.cuda.device_count()
