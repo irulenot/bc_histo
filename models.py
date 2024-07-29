@@ -527,30 +527,36 @@ class arch1000_cond2(nn.Module):
         # Issues: bigger FFT, scaling up layers
         # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
         # Just do a single or two 2d
-        self.proj_cond_high1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-        self.proj_cond_low1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-        self.proj_cond_high2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-        self.proj_cond_low2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
+
+        shape = (1, 3, 1000, 1000)
+        tensor = torch.randn(shape)
+        self.param_high1 = nn.Parameter(tensor)
+        self.param_low1 = nn.Parameter(tensor)
+        self.param_high2 = nn.Parameter(tensor)
+        self.param_low2 = nn.Parameter(tensor)
+        self.param_high3 = nn.Parameter(tensor)
+        self.param_low3 = nn.Parameter(tensor)
+
+        self.lin_mul_high1 = nn.Linear(2, 1)
+        self.lin_mul_low1 = nn.Linear(2, 1)
+        self.lin_mul_high2 = nn.Linear(2, 1)
+        self.lin_mul_low2 = nn.Linear(2, 1)
+        self.lin_mul_high3 = nn.Linear(2, 1)
+        self.lin_mul_low3 = nn.Linear(2, 1)
+
+        self.lin_bias_high1 = nn.Linear(2, 1)
+        self.lin_bias_low1 = nn.Linear(2, 1)
+        self.lin_bias_high2 = nn.Linear(2, 1)
+        self.lin_bias_low2 = nn.Linear(2, 1)
+        self.lin_bias_high3 = nn.Linear(2, 1)
+        self.lin_bias_low3 = nn.Linear(2, 1)
+
+        self.proj_cond_high1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)        
 
         # BatchNorm? (Instance norm, group norm) # LayerNorm? (what about norm that goes across channels rather than height, (reshape?))
         # Dropout after each block
@@ -698,19 +704,17 @@ class arch1000_cond2(nn.Module):
         x3 = torch.abs(x[1]).unsqueeze(0) # (1000,1000)  # low freq Magnitude
         x4 = torch.angle(x[1]).unsqueeze(0) # (1000,1000)  # Phase
 
-        bigger = torch.max(cond)
-        smaller = torch.min(cond)
-        cond[0] = bigger
-        cond[1] = smaller
+        cond = cond.reshape(2)
+        cond_mul_high = self.lin_mul_high1(cond)
+        cond_mul_low = self.lin_mul_low1(cond)
+        cond_bias_high = self.lin_bias_high1(cond)
+        cond_bias_low = self.lin_bias_low1(cond)
+        conv_high = self.proj_cond_high1.weight * cond_mul_high + cond_bias_high
+        conv_low = self.proj_cond_low1.weight * cond_mul_low + cond_bias_low
+        matrix_high = nn.functional.conv2d(self.param_high1, conv_high, bias=None, stride=1)
+        matrix_low = nn.functional.conv2d(self.param_low1, conv_low, bias=None, stride=1)
 
-        # (2) = (50000, 10000) = (10000, 50000)
-        # (2) -> (1000,1000)
-        c1 = self.proj_cond_high1(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
-        c2 = self.proj_cond_low1(cond.reshape(1, 2, 1, 1))
-        c1 = self.proj_cond_high2(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
-        c2 = self.proj_cond_low2(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
-
-        x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+        x1, x3 = x1 * matrix_high, x3 * matrix_low
 
         x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
         x2 = self.conv_channels_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
@@ -726,12 +730,39 @@ class arch1000_cond3(nn.Module):
     def __init__(self):
         super(arch1000_cond3, self).__init__()
 
-        self.proj_cond1 = nn.Sequential(
-            nn.Linear(1, 1)
-        )
-        self.proj_cond2 = nn.Sequential(
-            nn.Linear(1, 1)
-        )
+        # Issues: bigger FFT, scaling up layers
+        # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
+        # Just do a single or two 2d
+
+        shape = (1, 3, 1000, 1000)
+        tensor = torch.randn(shape)
+        self.param_high1 = nn.Parameter(tensor)
+        self.param_low1 = nn.Parameter(tensor)
+        self.param_high2 = nn.Parameter(tensor)
+        self.param_low2 = nn.Parameter(tensor)
+        self.param_high3 = nn.Parameter(tensor)
+        self.param_low3 = nn.Parameter(tensor)
+
+        self.lin_mul_high1 = nn.Linear(2, 1)
+        self.lin_mul_low1 = nn.Linear(2, 1)
+        self.lin_mul_high2 = nn.Linear(2, 1)
+        self.lin_mul_low2 = nn.Linear(2, 1)
+        self.lin_mul_high3 = nn.Linear(2, 1)
+        self.lin_mul_low3 = nn.Linear(2, 1)
+
+        self.lin_bias_high1 = nn.Linear(2, 1)
+        self.lin_bias_low1 = nn.Linear(2, 1)
+        self.lin_bias_high2 = nn.Linear(2, 1)
+        self.lin_bias_low2 = nn.Linear(2, 1)
+        self.lin_bias_high3 = nn.Linear(2, 1)
+        self.lin_bias_low3 = nn.Linear(2, 1)
+
+        self.proj_cond_high1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)        
 
         # BatchNorm? (Instance norm, group norm) # LayerNorm? (what about norm that goes across channels rather than height, (reshape?))
         # Dropout after each block
@@ -879,11 +910,26 @@ class arch1000_cond3(nn.Module):
         x3 = torch.abs(x[1]).unsqueeze(0) # (1000,1000)  # low freq Magnitude
         x4 = torch.angle(x[1]).unsqueeze(0) # (1000,1000)  # Phase
 
-        num_pixels = cond[0] * cond[1]
-        num_pixels1 = self.proj_cond1(num_pixels.reshape(1))
-        num_pixels2 = self.proj_cond2(num_pixels.reshape(1))
+        cond = cond.reshape(2)
+        cond_mul_high = self.lin_mul_high1(cond)
+        cond_mul_low = self.lin_mul_low1(cond)
+        cond_bias_high = self.lin_bias_high1(cond)
+        cond_bias_low = self.lin_bias_low1(cond)
+        conv_high = self.proj_cond_high1.weight * cond_mul_high + cond_bias_high
+        conv_low = self.proj_cond_low1.weight * cond_mul_low + cond_bias_low
+        matrix_high = nn.functional.conv2d(self.param_high1, conv_high, bias=None, stride=1)
+        matrix_low = nn.functional.conv2d(self.param_low1, conv_low, bias=None, stride=1)
+        x1, x3 = x1 * matrix_high, x3 * matrix_low
 
-        x1, x3 = x1 / num_pixels1, x3 / num_pixels2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+        cond_mul_high = self.lin_mul_high2(cond)
+        cond_mul_low = self.lin_mul_low2(cond)
+        cond_bias_high = self.lin_bias_high2(cond)
+        cond_bias_low = self.lin_bias_low2(cond)
+        conv_high = self.proj_cond_high2.weight * cond_mul_high + cond_bias_high
+        conv_low = self.proj_cond_low2.weight * cond_mul_low + cond_bias_low
+        matrix_high = nn.functional.conv2d(self.param_high2, conv_high, bias=None, stride=1)
+        matrix_low = nn.functional.conv2d(self.param_low2, conv_low, bias=None, stride=1)
+        x1, x3 = x1 * matrix_high, x3 * matrix_low
 
         x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
         x2 = self.conv_channels_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
@@ -902,16 +948,36 @@ class arch1000_cond4(nn.Module):
         # Issues: bigger FFT, scaling up layers
         # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
         # Just do a single or two 2d
-        self.proj_cond_high = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-        )
-        self.proj_cond_low = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-        )
+
+        shape = (1, 3, 1000, 1000)
+        tensor = torch.randn(shape)
+        self.param_high1 = nn.Parameter(tensor)
+        self.param_low1 = nn.Parameter(tensor)
+        self.param_high2 = nn.Parameter(tensor)
+        self.param_low2 = nn.Parameter(tensor)
+        self.param_high3 = nn.Parameter(tensor)
+        self.param_low3 = nn.Parameter(tensor)
+
+        self.lin_mul_high1 = nn.Linear(2, 1)
+        self.lin_mul_low1 = nn.Linear(2, 1)
+        self.lin_mul_high2 = nn.Linear(2, 1)
+        self.lin_mul_low2 = nn.Linear(2, 1)
+        self.lin_mul_high3 = nn.Linear(2, 1)
+        self.lin_mul_low3 = nn.Linear(2, 1)
+
+        self.lin_bias_high1 = nn.Linear(2, 1)
+        self.lin_bias_low1 = nn.Linear(2, 1)
+        self.lin_bias_high2 = nn.Linear(2, 1)
+        self.lin_bias_low2 = nn.Linear(2, 1)
+        self.lin_bias_high3 = nn.Linear(2, 1)
+        self.lin_bias_low3 = nn.Linear(2, 1)
+
+        self.proj_cond_high1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)        
 
         # BatchNorm? (Instance norm, group norm) # LayerNorm? (what about norm that goes across channels rather than height, (reshape?))
         # Dropout after each block
@@ -1059,10 +1125,36 @@ class arch1000_cond4(nn.Module):
         x3 = torch.abs(x[1]).unsqueeze(0) # (1000,1000)  # low freq Magnitude
         x4 = torch.angle(x[1]).unsqueeze(0) # (1000,1000)  # Phase
 
-        c1 = self.proj_cond_high(x1)
-        c2 = self.proj_cond_low(x3)
+        cond = cond.reshape(2)
+        cond_mul_high = self.lin_mul_high1(cond)
+        cond_mul_low = self.lin_mul_low1(cond)
+        cond_bias_high = self.lin_bias_high1(cond)
+        cond_bias_low = self.lin_bias_low1(cond)
+        conv_high = self.proj_cond_high1.weight * cond_mul_high + cond_bias_high
+        conv_low = self.proj_cond_low1.weight * cond_mul_low + cond_bias_low
+        matrix_high = nn.functional.conv2d(self.param_high1, conv_high, bias=None, stride=1)
+        matrix_low = nn.functional.conv2d(self.param_low1, conv_low, bias=None, stride=1)
+        x1, x3 = x1 * matrix_high, x3 * matrix_low
 
-        x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+        cond_mul_high = self.lin_mul_high2(cond)
+        cond_mul_low = self.lin_mul_low2(cond)
+        cond_bias_high = self.lin_bias_high2(cond)
+        cond_bias_low = self.lin_bias_low2(cond)
+        conv_high = self.proj_cond_high2.weight * cond_mul_high + cond_bias_high
+        conv_low = self.proj_cond_low2.weight * cond_mul_low + cond_bias_low
+        matrix_high = nn.functional.conv2d(self.param_high2, conv_high, bias=None, stride=1)
+        matrix_low = nn.functional.conv2d(self.param_low2, conv_low, bias=None, stride=1)
+        x1, x3 = x1 * matrix_high, x3 * matrix_low
+
+        cond_mul_high = self.lin_mul_high3(cond)
+        cond_mul_low = self.lin_mul_low3(cond)
+        cond_bias_high = self.lin_bias_high3(cond)
+        cond_bias_low = self.lin_bias_low3(cond)
+        conv_high = self.proj_cond_high3.weight * cond_mul_high + cond_bias_high
+        conv_low = self.proj_cond_low3.weight * cond_mul_low + cond_bias_low
+        matrix_high = nn.functional.conv2d(self.param_high3, conv_high, bias=None, stride=1)
+        matrix_low = nn.functional.conv2d(self.param_low3, conv_low, bias=None, stride=1)
+        x1, x3 = x1 * matrix_high, x3 * matrix_low
 
         x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
         x2 = self.conv_channels_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
@@ -1077,431 +1169,6 @@ class arch1000_cond5(nn.Module):
 
     def __init__(self):
         super(arch1000_cond5, self).__init__()
-
-        # Issues: bigger FFT, scaling up layers
-        # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
-        # Just do a single or two 2d
-        self.proj_cond_high1 = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1),
-            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1),
-            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1),
-        )
-        self.proj_cond_low1 = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1),
-            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1),
-            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1),
-        )
-        # self.proj_cond_high2 = nn.Sequential(
-        #     nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-        #     nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-        #     nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-        # )
-        # self.proj_cond_low2 = nn.Sequential(
-        #     nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-        #     nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-        #     nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-        # )
-        # self.proj_cond_high3 = nn.Sequential(
-        #     nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-        #     nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-        #     nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-        # )
-        # self.proj_cond_low3 = nn.Sequential(
-        #     nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-        #     nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-        #     nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1),
-        # )
-
-        # BatchNorm? (Instance norm, group norm) # LayerNorm? (what about norm that goes across channels rather than height, (reshape?))
-        # Dropout after each block
-        self.conv_channels_high_magnitude = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )
-        self.conv_channels_high_phase = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )
-        self.conv_channels_low_magnitude = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )               
-        self.conv_channels_low_phase = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )          
-
-        self.conv_freq = nn.Sequential(
-            nn.Conv2d(in_channels=4, out_channels=8, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(8),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=8, out_channels=32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(32),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=32, out_channels=8, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(8),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=8, out_channels=4, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(4),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=4, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )
-        self.head = nn.Sequential(
-            nn.Linear(1024, 256),
-            nn.LayerNorm(256),
-            nn.PReLU(),
-            nn.Linear(256, 32),
-            nn.LayerNorm(32),
-            nn.PReLU(),
-            nn.Linear(32, 5),
-        )
-
-    # Investigate potential ranges depending on resolution (static operation)
-    # Before conv_freq combine mag and phase
-    # Consistency in resolutions for cond
-    def forward(self, x, cond): # cond: (2)
-        x1 = torch.abs(x[0]).unsqueeze(0) # (1000,1000)   # high freq Magnitude
-        x2 = torch.angle(x[0]).unsqueeze(0) # (1000,1000) # Phase
-        x3 = torch.abs(x[1]).unsqueeze(0) # (1000,1000)  # low freq Magnitude
-        x4 = torch.angle(x[1]).unsqueeze(0) # (1000,1000)  # Phase
-
-        c1 = self.proj_cond_high1(x1)
-        c2 = self.proj_cond_low1(x3)
-        x1, x3 = x1 * c1, x3 * c2
-        # c1 = self.proj_cond_high2(x1)
-        # c2 = self.proj_cond_low2(x3)
-        # x1, x3 = x1 * c1, x3 * c2
-        # c1 = self.proj_cond_high3(x1)
-        # c2 = self.proj_cond_low3(x3)
-        # x1, x3 = x1 * c1, x3 * c2
-
-        x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
-        x2 = self.conv_channels_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
-        x3 = self.conv_channels_low_magnitude(x3).squeeze() # (3x1000x1000) -> (1x1000x1000)
-        x4 = self.conv_channels_low_phase(x4).squeeze() # (3x1000x1000) -> (1x1000x1000)
-
-        x = torch.stack([x1, x2, x3, x4]).unsqueeze(0) # (4x1000x1000)
-        x = self.conv_freq(x).view(x.size(0), -1) # (4x1000x1000) -> # (1, 1, 32, 32)
-        return self.head(x)
-    
-class arch1000_cond6(nn.Module):
-
-    def __init__(self):
-        super(arch1000_cond6, self).__init__()
-
-        # Issues: bigger FFT, scaling up layers
-        # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
-        # Just do a single or two 2d
-        self.proj_cond_high1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.LayerNorm(1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.LayerNorm(1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.LayerNorm(1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-        self.proj_cond_low1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.LayerNorm(1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.LayerNorm(1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.LayerNorm(1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-        self.proj_cond_high2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.LayerNorm(1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.LayerNorm(1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.LayerNorm(1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-        self.proj_cond_low2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.LayerNorm(1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.LayerNorm(1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.LayerNorm(1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-
-        # BatchNorm? (Instance norm, group norm) # LayerNorm? (what about norm that goes across channels rather than height, (reshape?))
-        # Dropout after each block
-        self.conv_channels_high_magnitude = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )
-        self.conv_channels_high_phase = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )
-        self.conv_channels_low_magnitude = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )               
-        self.conv_channels_low_phase = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )          
-
-        self.conv_freq = nn.Sequential(
-            nn.Conv2d(in_channels=4, out_channels=8, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(8),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=8, out_channels=32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(32),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=32, out_channels=8, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(8),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=8, out_channels=4, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(4),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=4, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )
-        self.head = nn.Sequential(
-            nn.Linear(1024, 256),
-            nn.LayerNorm(256),
-            nn.PReLU(),
-            nn.Linear(256, 32),
-            nn.LayerNorm(32),
-            nn.PReLU(),
-            nn.Linear(32, 5),
-        )
-
-    # Investigate potential ranges depending on resolution (static operation)
-    # Before conv_freq combine mag and phase
-    # Consistency in resolutions for cond
-    def forward(self, x, cond): # cond: (2)
-        x1 = torch.abs(x[0]).unsqueeze(0) # (1000,1000)   # high freq Magnitude
-        x2 = torch.angle(x[0]).unsqueeze(0) # (1000,1000) # Phase
-        x3 = torch.abs(x[1]).unsqueeze(0) # (1000,1000)  # low freq Magnitude
-        x4 = torch.angle(x[1]).unsqueeze(0) # (1000,1000)  # Phase
-
-        # (2) = (50000, 10000) = (10000, 50000)
-        # (2) -> (1000,1000)
-        c1 = self.proj_cond_high1(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
-        c2 = self.proj_cond_low1(cond.reshape(1, 2, 1, 1))
-        c1 = self.proj_cond_high2(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
-        c2 = self.proj_cond_low2(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
-
-        x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
-
-        x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
-        x2 = self.conv_channels_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
-        x3 = self.conv_channels_low_magnitude(x3).squeeze() # (3x1000x1000) -> (1x1000x1000)
-        x4 = self.conv_channels_low_phase(x4).squeeze() # (3x1000x1000) -> (1x1000x1000)
-
-        x = torch.stack([x1, x2, x3, x4]).unsqueeze(0) # (4x1000x1000)
-        x = self.conv_freq(x).view(x.size(0), -1) # (4x1000x1000) -> # (1, 1, 32, 32)
-        return self.head(x)
-    
-class arch1000_cond7(nn.Module):
-
-    def __init__(self):
-        super(arch1000_cond7, self).__init__()
 
         # Issues: bigger FFT, scaling up layers
         # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
@@ -1733,19 +1400,21 @@ class arch1000_cond7(nn.Module):
         c2 = self.proj_cond_low1(cond.reshape(1, 2, 1, 1))
         c1 = self.proj_cond_high2(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
         c2 = self.proj_cond_low2(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
-        x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+        x01, x03 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
 
         c1 = self.proj_cond_high3(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
         c2 = self.proj_cond_low3(cond.reshape(1, 2, 1, 1))
         c1 = self.proj_cond_high4(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
         c2 = self.proj_cond_low4(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
-        x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+        x11, x13 = x01 * c1, x03 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
 
         c1 = self.proj_cond_high5(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
         c2 = self.proj_cond_low5(cond.reshape(1, 2, 1, 1))
         c1 = self.proj_cond_high6(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
         c2 = self.proj_cond_low6(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
-        x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+        x21, x23 = x11 * c1, x13 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+
+        x1, x3 = x01 + x11 + x21, x03 + x13 + x23
 
         x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
         x2 = self.conv_channels_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
@@ -1754,6 +1423,432 @@ class arch1000_cond7(nn.Module):
 
         x = torch.stack([x1, x2, x3, x4]).unsqueeze(0) # (4x1000x1000)
         x = self.conv_freq(x).view(x.size(0), -1) # (4x1000x1000) -> # (1, 1, 32, 32)
+        return self.head(x)
+
+class arch1000_cond6(nn.Module):
+
+    def __init__(self):
+        super(arch1000_cond6, self).__init__()
+
+        self.norm_high_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_low_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_high_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_low_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+
+        self.proj_cond_high1 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low1 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_high2 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low2 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+
+        self.conv_channels_high_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
+            nn.BatchNorm2d(36),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
+            nn.BatchNorm2d(3),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+        )
+        self.conv_channels_high_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
+            nn.BatchNorm2d(36),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
+            nn.BatchNorm2d(3),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+        )
+        self.conv_channels_low_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
+            nn.BatchNorm2d(36),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
+            nn.BatchNorm2d(3),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+        )               
+        self.conv_channels_low_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
+            nn.BatchNorm2d(36),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
+            nn.BatchNorm2d(3),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+        )          
+
+        self.conv_freq = nn.Sequential(
+            nn.Conv2d(in_channels=4, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(8),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=8, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=32, out_channels=8, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(8),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=8, out_channels=4, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(4),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=4, out_channels=1, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+        )
+        self.head = nn.Sequential(
+            nn.Linear(1024, 256),
+            nn.LayerNorm(256),
+            nn.PReLU(),
+            nn.Linear(256, 32),
+            nn.LayerNorm(32),
+            nn.PReLU(),
+            nn.Linear(32, 5),
+        )
+
+    def forward(self, x, cond):
+        x1 = torch.abs(x[0]).unsqueeze(0)
+        x2 = torch.angle(x[0]).unsqueeze(0)
+        x3 = torch.abs(x[1]).unsqueeze(0)
+        x4 = torch.angle(x[1]).unsqueeze(0)
+
+        x1 = self.norm_high_magnitude(x1)
+        x2 = self.norm_high_phase(x2)
+        x3 = self.norm_low_magnitude(x3)
+        x4 = self.norm_low_phase(x4)
+
+        c1 = self.proj_cond_high1(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
+        c2 = self.proj_cond_low1(cond.reshape(1, 2, 1, 1))
+        c1 = self.proj_cond_high2(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
+        c2 = self.proj_cond_low2(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
+
+        x1, x3 = x1 + c1, x3 + c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+
+        x1 = self.conv_channels_high_magnitude(x1).squeeze()
+        x2 = self.conv_channels_high_phase(x2).squeeze()
+        x3 = self.conv_channels_low_magnitude(x3).squeeze()
+        x4 = self.conv_channels_low_phase(x4).squeeze()
+
+        x = torch.stack([x1, x2, x3, x4]).unsqueeze(0)
+        x = self.conv_freq(x).view(x.size(0), -1)
+        return self.head(x)
+    
+class arch1000_cond7(nn.Module):
+
+    def __init__(self):
+        super(arch1000_cond7, self).__init__()
+
+        self.norm_high_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_low_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_high_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_low_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+
+        self.proj_cond_high1 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low1 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_high2 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low2 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+
+        self.conv_channels_high_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
+            nn.BatchNorm2d(36),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
+            nn.BatchNorm2d(3),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+        )
+        self.conv_channels_high_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
+            nn.BatchNorm2d(36),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
+            nn.BatchNorm2d(3),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+        )
+        self.conv_channels_low_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
+            nn.BatchNorm2d(36),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
+            nn.BatchNorm2d(3),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+        )               
+        self.conv_channels_low_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
+            nn.BatchNorm2d(36),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
+            nn.BatchNorm2d(3),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+        )          
+
+        self.conv_freq = nn.Sequential(
+            nn.Conv2d(in_channels=4, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(8),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=8, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=32, out_channels=8, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(8),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=8, out_channels=4, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(4),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=4, out_channels=1, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+        )
+        self.head = nn.Sequential(
+            nn.Linear(1024, 256),
+            nn.LayerNorm(256),
+            nn.PReLU(),
+            nn.Linear(256, 32),
+            nn.LayerNorm(32),
+            nn.PReLU(),
+            nn.Linear(32, 5),
+        )
+
+    def forward(self, x, cond):
+        x1 = torch.abs(x[0]).unsqueeze(0)
+        x2 = torch.angle(x[0]).unsqueeze(0)
+        x3 = torch.abs(x[1]).unsqueeze(0)
+        x4 = torch.angle(x[1]).unsqueeze(0)
+
+        c1 = self.proj_cond_high1(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
+        c2 = self.proj_cond_low1(cond.reshape(1, 2, 1, 1))
+        c1 = self.proj_cond_high2(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
+        c2 = self.proj_cond_low2(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
+
+        x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+
+        x1 = self.norm_high_magnitude(x1)
+        x2 = self.norm_high_phase(x2)
+        x3 = self.norm_low_magnitude(x3)
+        x4 = self.norm_low_phase(x4)
+
+        x1 = self.conv_channels_high_magnitude(x1).squeeze()
+        x2 = self.conv_channels_high_phase(x2).squeeze()
+        x3 = self.conv_channels_low_magnitude(x3).squeeze()
+        x4 = self.conv_channels_low_phase(x4).squeeze()
+
+        x = torch.stack([x1, x2, x3, x4]).unsqueeze(0)
+        x = self.conv_freq(x).view(x.size(0), -1)
         return self.head(x)
     
 class arch1000_cond8(nn.Module):
@@ -1765,16 +1860,99 @@ class arch1000_cond8(nn.Module):
         # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
         # Just do a single or two 2d
         self.proj_cond_high1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=1000, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
         )
         self.proj_cond_low1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=1000, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
         )
         self.proj_cond_high2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=1000, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
         )
         self.proj_cond_low2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=1000, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+
+        self.proj_cond_high3 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low3 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_high4 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low4 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+
+        self.proj_cond_high5 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low5 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_high6 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low6 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+
+        self.norm_high_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_low_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_high_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_low_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
 
         # BatchNorm? (Instance norm, group norm) # LayerNorm? (what about norm that goes across channels rather than height, (reshape?))
@@ -1929,8 +2107,19 @@ class arch1000_cond8(nn.Module):
         c2 = self.proj_cond_low1(cond.reshape(1, 2, 1, 1))
         c1 = self.proj_cond_high2(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
         c2 = self.proj_cond_low2(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
-
         x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+
+        x1 = self.norm_high_magnitude(x1)
+        x3 = self.norm_low_magnitude(x3)
+
+        c1 = self.proj_cond_high3(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
+        c2 = self.proj_cond_low3(cond.reshape(1, 2, 1, 1))
+        c1 = self.proj_cond_high4(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
+        c2 = self.proj_cond_low4(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
+        x1, x3 = x1 + c1, x3 + c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+
+        x2 = self.norm_high_phase(x2)
+        x4 = self.norm_low_phase(x4)
 
         x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
         x2 = self.conv_channels_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
@@ -1949,38 +2138,64 @@ class arch1000_cond9(nn.Module):
         # Issues: bigger FFT, scaling up layers
         # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
         # Just do a single or two 2d
-        self.proj_cond_high1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+
+        self.norm_high_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
-        self.proj_cond_low1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        self.norm_low_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
-        self.proj_cond_high2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        self.norm_high_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
-        self.proj_cond_low2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        self.norm_low_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
-        self.proj_cond_high3 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=2, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=2, out_channels=3, kernel_size=3, padding=1),
-        )
-        self.proj_cond_low3 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=2, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=2, out_channels=3, kernel_size=3, padding=1),
-        )
+
+        shape = (1, 3, 1000, 1000)
+        tensor = torch.randn(shape)
+        self.param_high1 = nn.Parameter(tensor)
+        self.param_low1 = nn.Parameter(tensor)
+        self.param_high2 = nn.Parameter(tensor)
+        self.param_low2 = nn.Parameter(tensor)
+        self.param_high3 = nn.Parameter(tensor)
+        self.param_low3 = nn.Parameter(tensor)
+
+        self.lin_mul_high1 = nn.Linear(2, 1)
+        self.lin_mul_low1 = nn.Linear(2, 1)
+        self.lin_mul_high2 = nn.Linear(2, 1)
+        self.lin_mul_low2 = nn.Linear(2, 1)
+        self.lin_mul_high3 = nn.Linear(2, 1)
+        self.lin_mul_low3 = nn.Linear(2, 1)
+
+        self.lin_bias_high1 = nn.Linear(2, 1)
+        self.lin_bias_low1 = nn.Linear(2, 1)
+        self.lin_bias_high2 = nn.Linear(2, 1)
+        self.lin_bias_low2 = nn.Linear(2, 1)
+        self.lin_bias_high3 = nn.Linear(2, 1)
+        self.lin_bias_low3 = nn.Linear(2, 1)
+
+        self.proj_cond_high1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)        
+
+        self.proj_cond_high1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)        
 
         # BatchNorm? (Instance norm, group norm) # LayerNorm? (what about norm that goes across channels rather than height, (reshape?))
         # Dropout after each block
@@ -2128,16 +2343,41 @@ class arch1000_cond9(nn.Module):
         x3 = torch.abs(x[1]).unsqueeze(0) # (1000,1000)  # low freq Magnitude
         x4 = torch.angle(x[1]).unsqueeze(0) # (1000,1000)  # Phase
 
-        # (2) = (50000, 10000) = (10000, 50000)
-        # (2) -> (1000,1000)
-        c1 = self.proj_cond_high1(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
-        c2 = self.proj_cond_low1(cond.reshape(1, 2, 1, 1))
-        c1 = self.proj_cond_high2(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
-        c2 = self.proj_cond_low2(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
-        c1 = self.proj_cond_high3(c1.unsqueeze(0)) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
-        c2 = self.proj_cond_low3(c2.unsqueeze(0)) # (1000) -> (1000,1000)
+        cond = cond.reshape(2)
+        cond_mul_high = self.lin_mul_high1(cond)
+        cond_mul_low = self.lin_mul_low1(cond)
+        cond_bias_high = self.lin_bias_high1(cond)
+        cond_bias_low = self.lin_bias_low1(cond)
+        conv_high = self.proj_cond_high1.weight * cond_mul_high + cond_bias_high
+        conv_low = self.proj_cond_low1.weight * cond_mul_low + cond_bias_low
+        matrix_high = nn.functional.conv2d(self.param_high1, conv_high, bias=None, stride=1)
+        matrix_low = nn.functional.conv2d(self.param_low1, conv_low, bias=None, stride=1)
+        x1, x3 = x1 * matrix_high, x3 * matrix_low
 
-        x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+        cond_mul_high = self.lin_mul_high2(cond)
+        cond_mul_low = self.lin_mul_low2(cond)
+        cond_bias_high = self.lin_bias_high2(cond)
+        cond_bias_low = self.lin_bias_low2(cond)
+        conv_high = self.proj_cond_high2.weight * cond_mul_high + cond_bias_high
+        conv_low = self.proj_cond_low2.weight * cond_mul_low + cond_bias_low
+        matrix_high = nn.functional.conv2d(self.param_high2, conv_high, bias=None, stride=1)
+        matrix_low = nn.functional.conv2d(self.param_low2, conv_low, bias=None, stride=1)
+        x1, x3 = x1 * matrix_high, x3 * matrix_low
+
+        cond_mul_high = self.lin_mul_high3(cond)
+        cond_mul_low = self.lin_mul_low3(cond)
+        cond_bias_high = self.lin_bias_high3(cond)
+        cond_bias_low = self.lin_bias_low3(cond)
+        conv_high = self.proj_cond_high3.weight * cond_mul_high + cond_bias_high
+        conv_low = self.proj_cond_low3.weight * cond_mul_low + cond_bias_low
+        matrix_high = nn.functional.conv2d(self.param_high3, conv_high, bias=None, stride=1)
+        matrix_low = nn.functional.conv2d(self.param_low3, conv_low, bias=None, stride=1)
+        x1, x3 = x1 * matrix_high, x3 * matrix_low
+
+        x1 = self.norm_high_magnitude(x1)
+        x3 = self.norm_low_magnitude(x3)
+        x2 = self.norm_high_phase(x2)
+        x4 = self.norm_low_phase(x4)
 
         x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
         x2 = self.conv_channels_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
@@ -2147,7 +2387,7 @@ class arch1000_cond9(nn.Module):
         x = torch.stack([x1, x2, x3, x4]).unsqueeze(0) # (4x1000x1000)
         x = self.conv_freq(x).view(x.size(0), -1) # (4x1000x1000) -> # (1, 1, 32, 32)
         return self.head(x)
-
+    
 class arch1000_cond10(nn.Module):
 
     def __init__(self):
@@ -2156,30 +2396,64 @@ class arch1000_cond10(nn.Module):
         # Issues: bigger FFT, scaling up layers
         # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
         # Just do a single or two 2d
-        self.proj_cond_high1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+
+        self.norm_high_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
-        self.proj_cond_low1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        self.norm_low_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
-        self.proj_cond_high2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        self.norm_high_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
-        self.proj_cond_low2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        self.norm_low_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
+
+        shape = (1, 3, 1000, 1000)
+        tensor = torch.randn(shape)
+        self.param_high1 = nn.Parameter(tensor)
+        self.param_low1 = nn.Parameter(tensor)
+        self.param_high2 = nn.Parameter(tensor)
+        self.param_low2 = nn.Parameter(tensor)
+        self.param_high3 = nn.Parameter(tensor)
+        self.param_low3 = nn.Parameter(tensor)
+
+        self.lin_mul_high1 = nn.Linear(2, 1)
+        self.lin_mul_low1 = nn.Linear(2, 1)
+        self.lin_mul_high2 = nn.Linear(2, 1)
+        self.lin_mul_low2 = nn.Linear(2, 1)
+        self.lin_mul_high3 = nn.Linear(2, 1)
+        self.lin_mul_low3 = nn.Linear(2, 1)
+
+        self.lin_bias_high1 = nn.Linear(2, 1)
+        self.lin_bias_low1 = nn.Linear(2, 1)
+        self.lin_bias_high2 = nn.Linear(2, 1)
+        self.lin_bias_low2 = nn.Linear(2, 1)
+        self.lin_bias_high3 = nn.Linear(2, 1)
+        self.lin_bias_low3 = nn.Linear(2, 1)
+
+        self.proj_cond_high1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)        
+
+        self.proj_cond_high1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)        
 
         # BatchNorm? (Instance norm, group norm) # LayerNorm? (what about norm that goes across channels rather than height, (reshape?))
         # Dropout after each block
@@ -2187,13 +2461,16 @@ class arch1000_cond10(nn.Module):
             nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
             nn.BatchNorm2d(9),
             nn.PReLU(),
+            nn.Dropout(0.1),
             nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
             nn.BatchNorm2d(36),
             nn.PReLU(),
+            nn.Dropout(0.1),
 
             nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
             nn.BatchNorm2d(9),
             nn.PReLU(),
+            nn.Dropout(0.1),
             nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
             nn.BatchNorm2d(3),
             nn.PReLU(),
@@ -2206,13 +2483,16 @@ class arch1000_cond10(nn.Module):
             nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
             nn.BatchNorm2d(9),
             nn.PReLU(),
+            nn.Dropout(0.1),
             nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
             nn.BatchNorm2d(36),
             nn.PReLU(),
+            nn.Dropout(0.1),
 
             nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
             nn.BatchNorm2d(9),
             nn.PReLU(),
+            nn.Dropout(0.1),
             nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
             nn.BatchNorm2d(3),
             nn.PReLU(),
@@ -2225,13 +2505,16 @@ class arch1000_cond10(nn.Module):
             nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
             nn.BatchNorm2d(9),
             nn.PReLU(),
+            nn.Dropout(0.1),
             nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
             nn.BatchNorm2d(36),
             nn.PReLU(),
+            nn.Dropout(0.1),
 
             nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
             nn.BatchNorm2d(9),
             nn.PReLU(),
+            nn.Dropout(0.1),
             nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
             nn.BatchNorm2d(3),
             nn.PReLU(),
@@ -2244,13 +2527,16 @@ class arch1000_cond10(nn.Module):
             nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
             nn.BatchNorm2d(9),
             nn.PReLU(),
+            nn.Dropout(0.1),
             nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
             nn.BatchNorm2d(36),
             nn.PReLU(),
+            nn.Dropout(0.1),
 
             nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
             nn.BatchNorm2d(9),
             nn.PReLU(),
+            nn.Dropout(0.1),
             nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
             nn.BatchNorm2d(3),
             nn.PReLU(),
@@ -2264,25 +2550,32 @@ class arch1000_cond10(nn.Module):
             nn.Conv2d(in_channels=4, out_channels=8, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(8),
             nn.PReLU(),
+            nn.Dropout(0.1),
             nn.Conv2d(in_channels=8, out_channels=32, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(32),
             nn.PReLU(),
+            nn.Dropout(0.1),
             nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(64),
             nn.PReLU(),
+            nn.Dropout(0.1),
 
             nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(32),
             nn.PReLU(),
+            nn.Dropout(0.1),
             nn.Conv2d(in_channels=32, out_channels=8, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(8),
             nn.PReLU(),
+            nn.Dropout(0.1),
             nn.Conv2d(in_channels=8, out_channels=4, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(4),
             nn.PReLU(),
+            nn.Dropout(0.1),
             nn.Conv2d(in_channels=4, out_channels=1, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(1),
             nn.PReLU(),
+            nn.Dropout(0.1),
 
             nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(1),
@@ -2308,14 +2601,43 @@ class arch1000_cond10(nn.Module):
         x3 = torch.abs(x[1]).unsqueeze(0) # (1000,1000)  # low freq Magnitude
         x4 = torch.angle(x[1]).unsqueeze(0) # (1000,1000)  # Phase
 
-        # (2) = (50000, 10000) = (10000, 50000)
-        # (2) -> (1000,1000)
-        c1 = self.proj_cond_high1(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
-        c2 = self.proj_cond_low1(cond.reshape(1, 2, 1, 1))
-        c1 = self.proj_cond_high2(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
-        c2 = self.proj_cond_low2(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
+        cond = cond.reshape(2)
+        cond_mul_high = self.lin_mul_high1(cond)
+        cond_mul_low = self.lin_mul_low1(cond)
+        cond_bias_high = self.lin_bias_high1(cond)
+        cond_bias_low = self.lin_bias_low1(cond)
+        conv_high = self.proj_cond_high1.weight * cond_mul_high + cond_bias_high
+        conv_low = self.proj_cond_low1.weight * cond_mul_low + cond_bias_low
+        matrix_high = nn.functional.conv2d(self.param_high1, conv_high, bias=None, stride=1)
+        matrix_low = nn.functional.conv2d(self.param_low1, conv_low, bias=None, stride=1)
+        x01, x03 = x1 * matrix_high, x3 * matrix_low
 
-        x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+        cond_mul_high = self.lin_mul_high2(cond)
+        cond_mul_low = self.lin_mul_low2(cond)
+        cond_bias_high = self.lin_bias_high2(cond)
+        cond_bias_low = self.lin_bias_low2(cond)
+        conv_high = self.proj_cond_high2.weight * cond_mul_high + cond_bias_high
+        conv_low = self.proj_cond_low2.weight * cond_mul_low + cond_bias_low
+        matrix_high = nn.functional.conv2d(self.param_high2, conv_high, bias=None, stride=1)
+        matrix_low = nn.functional.conv2d(self.param_low2, conv_low, bias=None, stride=1)
+        x11, x13 = x01 * matrix_high, x03 * matrix_low
+
+        cond_mul_high = self.lin_mul_high3(cond)
+        cond_mul_low = self.lin_mul_low3(cond)
+        cond_bias_high = self.lin_bias_high3(cond)
+        cond_bias_low = self.lin_bias_low3(cond)
+        conv_high = self.proj_cond_high3.weight * cond_mul_high + cond_bias_high
+        conv_low = self.proj_cond_low3.weight * cond_mul_low + cond_bias_low
+        matrix_high = nn.functional.conv2d(self.param_high3, conv_high, bias=None, stride=1)
+        matrix_low = nn.functional.conv2d(self.param_low3, conv_low, bias=None, stride=1)
+        x21, x23 = x11 * matrix_high, x13 * matrix_low
+
+        x1, x3 = x01 + x11 + x21, x03 + x13 + x23
+
+        x1 = self.norm_high_magnitude(x1)
+        x3 = self.norm_low_magnitude(x3)
+        x2 = self.norm_high_phase(x2)
+        x4 = self.norm_low_phase(x4)
 
         x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
         x2 = self.conv_channels_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
@@ -2325,7 +2647,7 @@ class arch1000_cond10(nn.Module):
         x = torch.stack([x1, x2, x3, x4]).unsqueeze(0) # (4x1000x1000)
         x = self.conv_freq(x).view(x.size(0), -1) # (4x1000x1000) -> # (1, 1, 32, 32)
         return self.head(x)
-
+    
 class arch1000_cond11(nn.Module):
 
     def __init__(self):
@@ -2334,30 +2656,64 @@ class arch1000_cond11(nn.Module):
         # Issues: bigger FFT, scaling up layers
         # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
         # Just do a single or two 2d
-        self.proj_cond_high1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+
+        self.norm_high_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
-        self.proj_cond_low1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        self.norm_low_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
-        self.proj_cond_high2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        self.norm_high_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
-        self.proj_cond_low2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        self.norm_low_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
+
+        shape = (1, 3, 1000, 1000)
+        tensor = torch.randn(shape)
+        self.param_high1 = nn.Parameter(tensor)
+        self.param_low1 = nn.Parameter(tensor)
+        self.param_high2 = nn.Parameter(tensor)
+        self.param_low2 = nn.Parameter(tensor)
+        self.param_high3 = nn.Parameter(tensor)
+        self.param_low3 = nn.Parameter(tensor)
+
+        self.lin_mul_high1 = nn.Linear(2, 1)
+        self.lin_mul_low1 = nn.Linear(2, 1)
+        self.lin_mul_high2 = nn.Linear(2, 1)
+        self.lin_mul_low2 = nn.Linear(2, 1)
+        self.lin_mul_high3 = nn.Linear(2, 1)
+        self.lin_mul_low3 = nn.Linear(2, 1)
+
+        self.lin_bias_high1 = nn.Linear(2, 1)
+        self.lin_bias_low1 = nn.Linear(2, 1)
+        self.lin_bias_high2 = nn.Linear(2, 1)
+        self.lin_bias_low2 = nn.Linear(2, 1)
+        self.lin_bias_high3 = nn.Linear(2, 1)
+        self.lin_bias_low3 = nn.Linear(2, 1)
+
+        self.proj_cond_high1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)        
+
+        self.proj_cond_high1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low1 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low2 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_high3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)
+        self.proj_cond_low3 = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1)        
 
         # BatchNorm? (Instance norm, group norm) # LayerNorm? (what about norm that goes across channels rather than height, (reshape?))
         # Dropout after each block
@@ -2450,53 +2806,8 @@ class arch1000_cond11(nn.Module):
             nn.Dropout(0.1),
         )          
 
-        self.conv_channels_high = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )     
-        self.conv_channels_low = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )     
-
         self.conv_freq = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=4, out_channels=8, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(8),
             nn.PReLU(),
             nn.Dropout(0.1),
@@ -2550,26 +2861,28 @@ class arch1000_cond11(nn.Module):
         x3 = torch.abs(x[1]).unsqueeze(0) # (1000,1000)  # low freq Magnitude
         x4 = torch.angle(x[1]).unsqueeze(0) # (1000,1000)  # Phase
 
-        # (2) = (50000, 10000) = (10000, 50000)
-        # (2) -> (1000,1000)
-        c1 = self.proj_cond_high1(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
-        c2 = self.proj_cond_low1(cond.reshape(1, 2, 1, 1))
-        c1 = self.proj_cond_high2(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
-        c2 = self.proj_cond_low2(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
+        cond = cond.reshape(2)
+        cond_mul_high = self.lin_mul_high1(cond)
+        cond_mul_low = self.lin_mul_low1(cond)
+        cond_bias_high = self.lin_bias_high1(cond)
+        cond_bias_low = self.lin_bias_low1(cond)
+        conv_high = self.proj_cond_high1.weight * cond_mul_high + cond_bias_high
+        conv_low = self.proj_cond_low1.weight * cond_mul_low + cond_bias_low
+        matrix_high = nn.functional.conv2d(self.param_high1, conv_high, bias=None, stride=1)
+        matrix_low = nn.functional.conv2d(self.param_low1, conv_low, bias=None, stride=1)
+        x1, x3 = x1 * matrix_high, x3 * matrix_low
 
-        x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+        x1 = self.norm_high_magnitude(x1)
+        x3 = self.norm_low_magnitude(x3)
+        x2 = self.norm_high_phase(x2)
+        x4 = self.norm_low_phase(x4)
 
         x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
         x2 = self.conv_channels_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
         x3 = self.conv_channels_low_magnitude(x3).squeeze() # (3x1000x1000) -> (1x1000x1000)
         x4 = self.conv_channels_low_phase(x4).squeeze() # (3x1000x1000) -> (1x1000x1000)
 
-        x1 = torch.stack([x1, x2]).unsqueeze(0) # (4x1000x1000)
-        x3 = torch.stack([x3, x4]).unsqueeze(0) # (4x1000x1000)
-        x1 = self.conv_channels_high(x1).squeeze()
-        x3 = self.conv_channels_high(x3).squeeze()
-
-        x = torch.stack([x1, x3]).unsqueeze(0)
+        x = torch.stack([x1, x2, x3, x4]).unsqueeze(0) # (4x1000x1000)
         x = self.conv_freq(x).view(x.size(0), -1) # (4x1000x1000) -> # (1, 1, 32, 32)
         return self.head(x)
     
@@ -2578,9 +2891,27 @@ class arch1000_cond12(nn.Module):
     def __init__(self):
         super(arch1000_cond12, self).__init__()
 
-        # Issues: bigger FFT, scaling up layers
-        # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
-        # Just do a single or two 2d
+        self.norm_high_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_low_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_high_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_low_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+
         self.proj_cond_high1 = nn.Sequential(
             nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
             nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
@@ -2606,8 +2937,31 @@ class arch1000_cond12(nn.Module):
             nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
         )
 
-        # BatchNorm? (Instance norm, group norm) # LayerNorm? (what about norm that goes across channels rather than height, (reshape?))
-        # Dropout after each block
+        self.proj_cond_high3 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low3 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_high4 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low4 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+
         self.conv_channels_high_magnitude = nn.Sequential(
             nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
             nn.BatchNorm2d(9),
@@ -2743,17 +3097,12 @@ class arch1000_cond12(nn.Module):
             nn.Linear(32, 5),
         )
 
-    # Investigate potential ranges depending on resolution (static operation)
-    # Before conv_freq combine mag and phase
-    # Consistency in resolutions for cond
-    def forward(self, x, cond): # cond: (2)
-        x1 = torch.abs(x[0]).unsqueeze(0) # (1000,1000)   # high freq Magnitude
-        x2 = torch.angle(x[0]).unsqueeze(0) # (1000,1000) # Phase
-        x3 = torch.abs(x[1]).unsqueeze(0) # (1000,1000)  # low freq Magnitude
-        x4 = torch.angle(x[1]).unsqueeze(0) # (1000,1000)  # Phase
+    def forward(self, x, cond):
+        x1 = torch.abs(x[0]).unsqueeze(0)
+        x2 = torch.angle(x[0]).unsqueeze(0)
+        x3 = torch.abs(x[1]).unsqueeze(0)
+        x4 = torch.angle(x[1]).unsqueeze(0)
 
-        # (2) = (50000, 10000) = (10000, 50000)
-        # (2) -> (1000,1000)
         c1 = self.proj_cond_high1(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
         c2 = self.proj_cond_low1(cond.reshape(1, 2, 1, 1))
         c1 = self.proj_cond_high2(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
@@ -2761,14 +3110,25 @@ class arch1000_cond12(nn.Module):
 
         x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
 
-        x1, x3 = x1.transpose(2, 3), x3.transpose(2, 3)
-        x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
-        x2 = self.conv_channels_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
-        x3 = self.conv_channels_low_magnitude(x3).squeeze() # (3x1000x1000) -> (1x1000x1000)
-        x4 = self.conv_channels_low_phase(x4).squeeze() # (3x1000x1000) -> (1x1000x1000)
+        x1 = self.norm_high_magnitude(x1)
+        x2 = self.norm_high_phase(x2)
+        x3 = self.norm_low_magnitude(x3)
+        x4 = self.norm_low_phase(x4)
 
-        x = torch.stack([x1, x2, x3, x4]).unsqueeze(0) # (4x1000x1000)
-        x = self.conv_freq(x).view(x.size(0), -1) # (4x1000x1000) -> # (1, 1, 32, 32)
+        c1 = self.proj_cond_high3(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
+        c2 = self.proj_cond_low3(cond.reshape(1, 2, 1, 1))
+        c1 = self.proj_cond_high4(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
+        c2 = self.proj_cond_low4(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
+
+        x1, x3 = x1 + c1, x3 + c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+
+        x1 = self.conv_channels_high_magnitude(x1).squeeze()
+        x2 = self.conv_channels_high_phase(x2).squeeze()
+        x3 = self.conv_channels_low_magnitude(x3).squeeze()
+        x4 = self.conv_channels_low_phase(x4).squeeze()
+
+        x = torch.stack([x1, x2, x3, x4]).unsqueeze(0)
+        x = self.conv_freq(x).view(x.size(0), -1)
         return self.head(x)
     
 class arch1000_cond13(nn.Module):
@@ -2776,12 +3136,88 @@ class arch1000_cond13(nn.Module):
     def __init__(self):
         super(arch1000_cond13, self).__init__()
 
-        # Issues: bigger FFT, scaling up layers
-        # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
-        # Just do a single or two 2d
+        self.norm_high_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_low_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_high_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_low_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
 
-        # BatchNorm? (Instance norm, group norm) # LayerNorm? (what about norm that goes across channels rather than height, (reshape?))
-        # Dropout after each block
+        self.norm_high_magnitude2 = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, stride=1, padding=1),
+        )
+        self.norm_low_magnitude2 = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, stride=1, padding=1),
+        )
+
+        self.proj_cond_high1 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low1 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_high2 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low2 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+
+        self.proj_cond_high3 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low3 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_high4 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low4 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+
         self.conv_channels_high_magnitude = nn.Sequential(
             nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
             nn.BatchNorm2d(9),
@@ -2917,27 +3353,34 @@ class arch1000_cond13(nn.Module):
             nn.Linear(32, 5),
         )
 
-    # Investigate potential ranges depending on resolution (static operation)
-    # Before conv_freq combine mag and phase
-    # Consistency in resolutions for cond
-    def forward(self, x, cond): # cond: (2)
-        x1 = torch.abs(x[0]).unsqueeze(0) # (1000,1000)   # high freq Magnitude
-        x2 = torch.angle(x[0]).unsqueeze(0) # (1000,1000) # Phase
-        x3 = torch.abs(x[1]).unsqueeze(0) # (1000,1000)  # low freq Magnitude
-        x4 = torch.angle(x[1]).unsqueeze(0) # (1000,1000)  # Phase
+    def forward(self, x, cond):
+        x1 = torch.abs(x[0]).unsqueeze(0)
+        x2 = torch.angle(x[0]).unsqueeze(0)
+        x3 = torch.abs(x[1]).unsqueeze(0)
+        x4 = torch.angle(x[1]).unsqueeze(0)
 
-        c1 = torch.max(x1) - torch.min(x2)
-        c2 = torch.max(x3) - torch.min(x3)
+        c1 = self.proj_cond_high1(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
+        c2 = self.proj_cond_low1(cond.reshape(1, 2, 1, 1))
+        c1 = self.proj_cond_high2(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
+        c2 = self.proj_cond_low2(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
 
-        x1, x3 = x1 / c1, x3 / c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
+        x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
 
-        x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
-        x2 = self.conv_channels_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
-        x3 = self.conv_channels_low_magnitude(x3).squeeze() # (3x1000x1000) -> (1x1000x1000)
-        x4 = self.conv_channels_low_phase(x4).squeeze() # (3x1000x1000) -> (1x1000x1000)
+        x1 = self.norm_high_magnitude(x1)
+        x2 = self.norm_high_phase(x2)
+        x3 = self.norm_low_magnitude(x3)
+        x4 = self.norm_low_phase(x4)
 
-        x = torch.stack([x1, x2, x3, x4]).unsqueeze(0) # (4x1000x1000)
-        x = self.conv_freq(x).view(x.size(0), -1) # (4x1000x1000) -> # (1, 1, 32, 32)
+        x1 = self.norm_high_magnitude2(x1)
+        x3 = self.norm_low_magnitude2(x3)
+
+        x1 = self.conv_channels_high_magnitude(x1).squeeze()
+        x2 = self.conv_channels_high_phase(x2).squeeze()
+        x3 = self.conv_channels_low_magnitude(x3).squeeze()
+        x4 = self.conv_channels_low_phase(x4).squeeze()
+
+        x = torch.stack([x1, x2, x3, x4]).unsqueeze(0)
+        x = self.conv_freq(x).view(x.size(0), -1)
         return self.head(x)
     
 class arch1000_cond14(nn.Module):
@@ -2945,485 +3388,132 @@ class arch1000_cond14(nn.Module):
     def __init__(self):
         super(arch1000_cond14, self).__init__()
 
-        # Issues: bigger FFT, scaling up layers
-        # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
-        # Just do a single or two 2d
-        self.proj_cond_high1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        self.norm_high_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
-        self.proj_cond_low1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-        self.proj_cond_high2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-        self.proj_cond_low2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-
-        # BatchNorm? (Instance norm, group norm) # LayerNorm? (what about norm that goes across channels rather than height, (reshape?))
-        # Dropout after each block
-        self.conv_channels_high_magnitude = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )
-        self.conv_channels_high_phase = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )
-        self.conv_channels_low_magnitude = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )               
-        self.conv_channels_low_phase = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )          
-
-        self.conv_freq = nn.Sequential(
-            nn.Conv2d(in_channels=4, out_channels=8, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(8),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=8, out_channels=32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(32),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=32, out_channels=8, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(8),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=8, out_channels=4, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(4),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=4, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )
-        self.head = nn.Sequential(
-            nn.Linear(1024, 256),
-            nn.LayerNorm(256),
-            nn.PReLU(),
-            nn.Linear(256, 32),
-            nn.LayerNorm(32),
-            nn.PReLU(),
-            nn.Linear(32, 5),
-        )
-
-    # Investigate potential ranges depending on resolution (static operation)
-    # Before conv_freq combine mag and phase
-    # Consistency in resolutions for cond
-    def forward(self, x, cond): # cond: (2)
-        x1 = torch.abs(x[0]).unsqueeze(0) # (1000,1000)   # high freq Magnitude
-        x2 = torch.angle(x[0]).unsqueeze(0) # (1000,1000) # Phase
-        x3 = torch.abs(x[1]).unsqueeze(0) # (1000,1000)  # low freq Magnitude
-        x4 = torch.angle(x[1]).unsqueeze(0) # (1000,1000)  # Phase
-
-        # (2) = (50000, 10000) = (10000, 50000)
-        # (2) -> (1000,1000)
-        c1 = self.proj_cond_high1(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
-        c2 = self.proj_cond_low1(cond.reshape(1, 2, 1, 1))
-        c1 = self.proj_cond_high2(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
-        c2 = self.proj_cond_low2(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
-
-        x1, x3 = x1 + c1, x3 + c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
-
-        x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
-        x2 = self.conv_channels_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
-        x3 = self.conv_channels_low_magnitude(x3).squeeze() # (3x1000x1000) -> (1x1000x1000)
-        x4 = self.conv_channels_low_phase(x4).squeeze() # (3x1000x1000) -> (1x1000x1000)
-
-        x = torch.stack([x1, x2, x3, x4]).unsqueeze(0) # (4x1000x1000)
-        x = self.conv_freq(x).view(x.size(0), -1) # (4x1000x1000) -> # (1, 1, 32, 32)
-        return self.head(x)
-    
-class arch1000_cond15(nn.Module):
-
-    def __init__(self):
-        super(arch1000_cond15, self).__init__()
-
-        # Issues: bigger FFT, scaling up layers
-        # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
-        # Just do a single or two 2d
-        self.proj_cond_high1 = nn.Sequential(
-            nn.Linear(2, 16),
-            nn.LayerNorm(16),
-            nn.ReLU(),
-            nn.Linear(16, 64),
-            nn.LayerNorm(64),
-            nn.ReLU(),
-            nn.Linear(64, 256),
-            nn.LayerNorm(256),
-            nn.ReLU(),
-            nn.Linear(256, 1000),
-            nn.LayerNorm(1000),
-            nn.ReLU(),
-        )
-        self.proj_cond_low1 = nn.Sequential(
-            nn.Linear(2, 16),
-            nn.LayerNorm(16),
-            nn.ReLU(),
-            nn.Linear(16, 64),
-            nn.LayerNorm(64),
-            nn.ReLU(),
-            nn.Linear(64, 256),
-            nn.LayerNorm(256),
-            nn.ReLU(),
-            nn.Linear(256, 1000),
-            nn.LayerNorm(1000),
-            nn.ReLU(),
-        )
-        
-        self.proj_cond_high2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-        self.proj_cond_low2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-
-        # BatchNorm? (Instance norm, group norm) # LayerNorm? (what about norm that goes across channels rather than height, (reshape?))
-        # Dropout after each block
-        self.conv_channels_high_magnitude = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )
-        self.conv_channels_high_phase = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )
-        self.conv_channels_low_magnitude = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )               
-        self.conv_channels_low_phase = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )          
-
-        self.conv_freq = nn.Sequential(
-            nn.Conv2d(in_channels=4, out_channels=8, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(8),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=8, out_channels=32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(32),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=32, out_channels=8, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(8),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=8, out_channels=4, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(4),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=4, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-        )
-        self.head = nn.Sequential(
-            nn.Linear(1024, 256),
-            nn.LayerNorm(256),
-            nn.PReLU(),
-            nn.Linear(256, 32),
-            nn.LayerNorm(32),
-            nn.PReLU(),
-            nn.Linear(32, 5),
-        )
-
-    # Investigate potential ranges depending on resolution (static operation)
-    # Before conv_freq combine mag and phase
-    # Consistency in resolutions for cond
-    def forward(self, x, cond): # cond: (2)
-        x1 = torch.abs(x[0]).unsqueeze(0) # (1000,1000)   # high freq Magnitude
-        x2 = torch.angle(x[0]).unsqueeze(0) # (1000,1000) # Phase
-        x3 = torch.abs(x[1]).unsqueeze(0) # (1000,1000)  # low freq Magnitude
-        x4 = torch.angle(x[1]).unsqueeze(0) # (1000,1000)  # Phase
-
-        # (2) = (50000, 10000) = (10000, 50000)
-        # (2) -> (1000,1000)
-        c1 = self.proj_cond_high1(cond.reshape(1, 2)).reshape(1, 1000, 1, 1) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
-        c2 = self.proj_cond_low1(cond.reshape(1, 2)).reshape(1, 1000, 1, 1)
-        c1 = self.proj_cond_high2(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
-        c2 = self.proj_cond_low2(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
-
-        x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
-
-        x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
-        x2 = self.conv_channels_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
-        x3 = self.conv_channels_low_magnitude(x3).squeeze() # (3x1000x1000) -> (1x1000x1000)
-        x4 = self.conv_channels_low_phase(x4).squeeze() # (3x1000x1000) -> (1x1000x1000)
-
-        x = torch.stack([x1, x2, x3, x4]).unsqueeze(0) # (4x1000x1000)
-        x = self.conv_freq(x).view(x.size(0), -1) # (4x1000x1000) -> # (1, 1, 32, 32)
-        return self.head(x)
-    
-class arch1000_cond16(nn.Module):
-
-    def __init__(self):
-        super(arch1000_cond16, self).__init__()
-
-        # Issues: bigger FFT, scaling up layers
-        # Inspect normalization (values, normalize x values, histogram, compare different sizes, compare ranges, with trained model)
-        # Just do a single or two 2d
-        self.proj_cond_high1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-        self.proj_cond_low1 = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-        self.proj_cond_high2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-        self.proj_cond_low2 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
-            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
-        )
-
-        # BatchNorm? (Instance norm, group norm) # LayerNorm? (what about norm that goes across channels rather than height, (reshape?))
-        # Dropout after each block
-        self.conv_channels_high_magnitude = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
-            nn.BatchNorm2d(36),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-
-            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
-            nn.BatchNorm2d(9),
-            nn.PReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
-            nn.BatchNorm2d(3),
-            nn.PReLU(),
-            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-            nn.BatchNorm2d(1),
-            nn.PReLU(),
-            nn.Dropout(0.1),
+        self.norm_low_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
         )
         self.norm_high_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_low_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+
+        self.norm_high_magnitude2 = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+        self.norm_low_magnitude2 = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1),
+        )
+
+        self.proj_cond_high1 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low1 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_high2 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low2 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+
+        self.proj_cond_high3 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low3 = nn.Sequential(
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_high4 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+        self.proj_cond_low4 = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=256, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=1000, kernel_size=3, padding=1),
+        )
+
+        self.conv_channels_high_magnitude = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
+            nn.BatchNorm2d(36),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
             nn.BatchNorm2d(3),
+            nn.PReLU(),
             nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
-        )     
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+        )
+        self.conv_channels_high_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
+            nn.BatchNorm2d(36),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
+            nn.BatchNorm2d(3),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+        )
         self.conv_channels_low_magnitude = nn.Sequential(
             nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
             nn.BatchNorm2d(9),
@@ -3446,13 +3536,31 @@ class arch1000_cond16(nn.Module):
             nn.PReLU(),
             nn.Dropout(0.1),
         )               
-        self.norm_low_phase = nn.Sequential(
+        self.conv_channels_low_phase = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=36, kernel_size=1, stride=1),
+            nn.BatchNorm2d(36),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+
+            nn.Conv2d(in_channels=36, out_channels=9, kernel_size=1, stride=1),
+            nn.BatchNorm2d(9),
+            nn.PReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(in_channels=9, out_channels=3, kernel_size=1, stride=1),
             nn.BatchNorm2d(3),
+            nn.PReLU(),
             nn.Conv2d(in_channels=3, out_channels=1, kernel_size=1, stride=1),
+            nn.BatchNorm2d(1),
+            nn.PReLU(),
+            nn.Dropout(0.1),
         )          
 
         self.conv_freq = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=4, out_channels=8, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(8),
             nn.PReLU(),
             nn.Dropout(0.1),
@@ -3497,17 +3605,12 @@ class arch1000_cond16(nn.Module):
             nn.Linear(32, 5),
         )
 
-    # Investigate potential ranges depending on resolution (static operation)
-    # Before conv_freq combine mag and phase
-    # Consistency in resolutions for cond
-    def forward(self, x, cond): # cond: (2)
-        x1 = torch.abs(x[0]).unsqueeze(0) # (1000,1000)   # high freq Magnitude
-        x2 = torch.angle(x[0]).unsqueeze(0) # (1000,1000) # Phase
-        x3 = torch.abs(x[1]).unsqueeze(0) # (1000,1000)  # low freq Magnitude
-        x4 = torch.angle(x[1]).unsqueeze(0) # (1000,1000)  # Phase
+    def forward(self, x, cond):
+        x1 = torch.abs(x[0]).unsqueeze(0)
+        x2 = torch.angle(x[0]).unsqueeze(0)
+        x3 = torch.abs(x[1]).unsqueeze(0)
+        x4 = torch.angle(x[1]).unsqueeze(0)
 
-        # (2) = (50000, 10000) = (10000, 50000)
-        # (2) -> (1000,1000)
         c1 = self.proj_cond_high1(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
         c2 = self.proj_cond_low1(cond.reshape(1, 2, 1, 1))
         c1 = self.proj_cond_high2(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
@@ -3515,14 +3618,26 @@ class arch1000_cond16(nn.Module):
 
         x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
 
-        x1 = self.conv_channels_high_magnitude(x1).squeeze()  # (3x1000x1000) -> (1x1000x1000)
-        x3 = self.conv_channels_low_magnitude(x3).squeeze() # (3x1000x1000) -> (1x1000x1000)
+        x1 = self.norm_high_magnitude(x1)
+        x2 = self.norm_high_phase(x2)
+        x3 = self.norm_low_magnitude(x3)
+        x4 = self.norm_low_phase(x4)
 
-        x2 = self.norm_high_phase(x2).squeeze()  # (3x1000x1000) -> (1x1000x1000)
-        x4 = self.norm_low_phase(x4).squeeze() # (3x1000x1000) -> (1x1000x1000)
+        c1 = self.proj_cond_high3(cond.reshape(1, 2, 1, 1)) # (1, 2, 1, 1) -> (1, 1000, 1, 1)
+        c2 = self.proj_cond_low3(cond.reshape(1, 2, 1, 1))
+        c1 = self.proj_cond_high4(c1.permute(0, 2, 1, 3)).squeeze(3) # (1, 1000, 1, 1) -> (1, 1, 1000, 1)
+        c2 = self.proj_cond_low4(c2.permute(0, 2, 1, 3)).squeeze(3) # (1000) -> (1000,1000)
 
-        x1, x2 = x1 + x2, x3 + x4
+        x1, x3 = x1 * c1, x3 * c2 # (1000,1000) * (1000,1000) # Scaling Magnitude
 
-        x = torch.stack([x1, x3]).unsqueeze(0) # (4x1000x1000)
-        x = self.conv_freq(x).view(x.size(0), -1) # (4x1000x1000) -> # (1, 1, 32, 32)
+        x1 = self.norm_high_magnitude2(x1)
+        x3 = self.norm_low_magnitude2(x3)
+
+        x1 = self.conv_channels_high_magnitude(x1).squeeze()
+        x2 = self.conv_channels_high_phase(x2).squeeze()
+        x3 = self.conv_channels_low_magnitude(x3).squeeze()
+        x4 = self.conv_channels_low_phase(x4).squeeze()
+
+        x = torch.stack([x1, x2, x3, x4]).unsqueeze(0)
+        x = self.conv_freq(x).view(x.size(0), -1)
         return self.head(x)

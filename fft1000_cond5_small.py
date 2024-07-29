@@ -251,9 +251,9 @@ def main_worker(gpu, args):
             file_name = item['image'][:-5] + '.npz'
             if os.path.exists(args.data_root + file_name):
                 existing_data[split].append(item)
-
-    # existing_data['training'] = existing_data['training'][:100]
-    # existing_data['validation'] = existing_data['validation'][:20]
+#  = exist
+#     existing_data['training'] = existing_data['training'][:100]
+#     existing_data['validation']ing_data['validation'][:20]
 
     with open(args.dataset_json + '2', 'w+') as f:
         json.dump(existing_data, f)            

@@ -502,7 +502,7 @@ def parse_args():
     # for multigpu
     parser.add_argument("--distributed", default=False, action="store_true", help="use multigpu training, recommended")
     parser.add_argument("--world_size", default=1, type=int, help="number of nodes for distributed training")
-    parser.add_argument("--rank", default=3, type=int, help="node rank for distributed training")
+    parser.add_argument("--rank", default=0, type=int, help="node rank for distributed training")
     parser.add_argument(
         "--dist-url", default="tcp://127.0.0.1:23456", type=str, help="url used to set up distributed training"
     )
@@ -542,4 +542,4 @@ if __name__ == "__main__":
         # print("Multigpu", ngpus_per_node, "rescaled lr", args.optim_lr)
         mp.spawn(main_worker, nprocs=ngpus_per_node, args=(args,))
     else:
-        main_worker(3, args)
+        main_worker(0, args)
