@@ -273,6 +273,19 @@ def main_worker(gpu, args):
     # if args.rank == 0:
     #     print("Batch size is:", args.batch_size, "epochs", args.epochs)
 
+    import json
+    with open(args.dataset_json, 'r') as f:
+        data = json.load(f)
+    existing_data = {'training': [], 'validation': []}
+    for split, paths in data.items():
+        for item in paths:
+            file_name = item['image'][:-5] + '.tiff'
+            if os.path.exists(args.data_root + file_name):
+                existing_data[split].append(item)
+    with open(args.dataset_json + '2', 'w+') as f:
+        json.dump(existing_data, f)            
+    args.dataset_json = args.dataset_json + '2'
+
     #############
     # Create MONAI dataset
     training_list = load_decathlon_datalist(
@@ -488,7 +501,7 @@ def parse_args():
     parser.add_argument("--num_classes", default=5, type=int, help="number of output classes")
     parser.add_argument("--mil_mode", default="att_trans", help="MIL algorithm")
     parser.add_argument(
-        "--tile_count", default=22, type=int, help="number of patches (instances) to extract from WSI image"
+        "--tile_count", default=33, type=int, help="number of patches (instances) to extract from WSI image"
     )
     parser.add_argument("--tile_size", default=256, type=int, help="size of square patch (instance) in pixels")
 
@@ -543,11 +556,10 @@ if __name__ == "__main__":
     if args.dataset_json is None:
         # download default json datalist
         resource = "https://drive.google.com/uc?id=1L6PtKBlHHyUgTE4rVhRuOLTQKgD4tBRK"
-        dst = "datalists/datalist_panda_0.json"
         if args.quick == True:
-            dst = "datalists/datalist_panda_fft_quick.json"
+            dst = "datalists/train_images_FFT1000_WSI_both_centered_quick.json"
         else:
-            dst = "datalists/datalist_panda_fft.json"
+            dst = "datalists/train_images_FFT1000_WSI_both_centered.json"
         # if not os.path.exists(dst):
         #     gdown.download(resource, dst, quiet=False)
         args.dataset_json = dst
