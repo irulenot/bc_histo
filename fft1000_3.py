@@ -60,6 +60,13 @@ set_seed(42)
 def fft_transform(batch_data, device):
     image_path = batch_data['image'][0]
     image = torch.tensor(np.load(image_path)['arr_0'])
+    k = random.randint(0, 3)
+    image = torch.rot90(image, k, [2, 3])
+    return image.to(device), batch_data['label'].to(device)
+
+def fft_transform2(batch_data, device):
+    image_path = batch_data['image'][0]
+    image = torch.tensor(np.load(image_path)['arr_0'])
     return image.to(device), batch_data['label'].to(device)
 
 def train_epoch(model, loader, optimizer, scaler, epoch, args):
@@ -126,7 +133,7 @@ def val_epoch(model, loader, epoch, args, max_tiles=None):
 
     with torch.no_grad():
         for idx, batch_data in enumerate(loader):
-            image, target = fft_transform(batch_data, args.rank)
+            image, target = fft_transform2(batch_data, args.rank)
 
             # with autocast(enabled=args.amp):
                 # if number of instances is not big, we can run inference directly
@@ -338,7 +345,7 @@ def main_worker(gpu, args):
     # if args.rank == 1:
     #     print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
    
-    model = arch1000_3()
+    model = arch1000()
 
     best_acc = 0
     start_epoch = 0
