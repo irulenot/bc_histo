@@ -345,7 +345,7 @@ def main_worker(gpu, args):
     # if args.rank == 2:
     #     print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
    
-    model = arch1000_2()
+    model = arch1000_5()
 
     best_acc = 0
     start_epoch = 0

@@ -60,9 +60,14 @@ set_seed(42)
 def fft_transform(batch_data, device):
     image_path = batch_data['image'][0]
     image = torch.tensor(np.load(image_path)['arr_0'])
-    image_path = image_path[:-4] + '_cond' + image_path[-4:]
-    cond = torch.tensor(np.load(image_path)['arr_0'])
-    return image.to(device), cond.to(torch.float32).to(device), batch_data['label'].to(device)
+    k = random.randint(0, 3)
+    image = torch.rot90(image, k, [2, 3])
+    return image.to(device), batch_data['label'].to(device)
+
+def fft_transform2(batch_data, device):
+    image_path = batch_data['image'][0]
+    image = torch.tensor(np.load(image_path)['arr_0'])
+    return image.to(device), batch_data['label'].to(device)
 
 def train_epoch(model, loader, optimizer, scaler, epoch, args):
     """One train epoch over the dataset"""
@@ -77,12 +82,12 @@ def train_epoch(model, loader, optimizer, scaler, epoch, args):
     loss, acc = 0.0, 0.0
 
     for idx, batch_data in enumerate(loader):
-        image, cond, target = fft_transform(batch_data, args.rank)
+        image, target = fft_transform(batch_data, args.rank)
 
         optimizer.zero_grad(set_to_none=True)
 
         # with autocast(enabled=args.amp):
-        logits = model(image, cond)
+        logits = model(image)
         loss = criterion(logits, target)
 
         scaler.scale(loss).backward()
@@ -128,11 +133,11 @@ def val_epoch(model, loader, epoch, args, max_tiles=None):
 
     with torch.no_grad():
         for idx, batch_data in enumerate(loader):
-            image, cond, target = fft_transform(batch_data, args.rank)
+            image, target = fft_transform2(batch_data, args.rank)
 
             # with autocast(enabled=args.amp):
                 # if number of instances is not big, we can run inference directly
-            logits = model(image, cond)
+            logits = model(image)
             loss = criterion(logits, target)
 
             pred = logits.sigmoid().sum(1).detach().round()
@@ -340,7 +345,7 @@ def main_worker(gpu, args):
     # if args.rank == 1:
     #     print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
    
-    model = arch1000_cond()
+    model = arch1000()
 
     best_acc = 0
     start_epoch = 0
@@ -462,7 +467,7 @@ def main_worker(gpu, args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Multiple Instance Learning (MIL) example of classification from WSI.")
     parser.add_argument(
-        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT1000c_WSI_both_centered/", help="path to root folder of images"
+        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT1000_WSI_both_centered/", help="path to root folder of images"
     )
     parser.add_argument("--dataset_json", default=None, type=str, help="path to dataset json file")
 
@@ -506,7 +511,7 @@ def parse_args():
     )
     parser.add_argument("--dist-backend", default="nccl", type=str, help="distributed backend")
 
-    parser.add_argument("--quick", default=True, action="store_true", help="use a small subset of data for debugging")
+    parser.add_argument("--quick", default=False, action="store_true", help="use a small subset of data for debugging")
 
     args = parser.parse_args()
 
@@ -531,7 +536,7 @@ if __name__ == "__main__":
         # if not os.path.exists(dst):
         #     gdown.download(resource, dst, quiet=False)
         args.dataset_json = dst
-    
+
     file_name = os.path.basename(__file__).split('.')[0]
     if args.quick == True:
         file_name = file_name + '_quick'

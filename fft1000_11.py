@@ -60,9 +60,8 @@ set_seed(42)
 def fft_transform(batch_data, device):
     image_path = batch_data['image'][0]
     image = torch.tensor(np.load(image_path)['arr_0'])
-    # k = random.randint(0, 3)
-    # image = torch.rot90(image, k, [2, 3])
-    image = image[:, torch.randperm(image.size(1)), :, :]
+    k = random.randint(0, 3)
+    image = torch.rot90(image, k, [2, 3])
     return image.to(device), batch_data['label'].to(device)
 
 def fft_transform2(batch_data, device):
