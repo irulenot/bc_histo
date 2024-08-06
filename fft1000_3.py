@@ -88,7 +88,11 @@ def train_epoch(model, loader, optimizer, scaler, epoch, args):
 
         # with autocast(enabled=args.amp):
         logits = model(image)
-        loss = criterion(logits, target)
+        true_target = int(target.sum(1).round())
+        one_hot_tensor = torch.zeros((1, 6))
+        one_hot_tensor[:, true_target] = 1
+        one_hot_tensor = one_hot_tensor.to(logits.device)
+        loss = criterion(logits, one_hot_tensor)
 
         scaler.scale(loss).backward()
         scaler.step(optimizer)
@@ -138,9 +142,15 @@ def val_epoch(model, loader, epoch, args, max_tiles=None):
             # with autocast(enabled=args.amp):
                 # if number of instances is not big, we can run inference directly
             logits = model(image)
-            loss = criterion(logits, target)
+            true_target = int(target.sum(1).round())
+            one_hot_tensor = torch.zeros((1, 6))
+            one_hot_tensor[:, true_target] = 1
+            one_hot_tensor = one_hot_tensor.to(logits.device)
+            loss = criterion(logits, one_hot_tensor)
 
             pred = logits.sigmoid().sum(1).detach().round()
+
+            pred = torch.tensor([logits.argmax()]).to(logits.device)
             target = target.sum(1).round()
             acc = (pred == target).float().mean()
 
@@ -511,7 +521,7 @@ def parse_args():
     )
     parser.add_argument("--dist-backend", default="nccl", type=str, help="distributed backend")
 
-    parser.add_argument("--quick", default=False, action="store_true", help="use a small subset of data for debugging")
+    parser.add_argument("--quick", default=True, action="store_true", help="use a small subset of data for debugging")
 
     args = parser.parse_args()
 
