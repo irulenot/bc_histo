@@ -58,16 +58,24 @@ def set_seed(seed):
 set_seed(42)
 
 def fft_transform(batch_data, device):
-    image_path = batch_data['image'][0]
-    image = torch.tensor(np.load(image_path)['arr_0'])
-    k = random.randint(0, 3)
-    image = torch.rot90(image, k, [2, 3])
-    return image.to(device), batch_data['label'].to(device)
+    image_paths = batch_data['image']
+    images = []
+    for image_path in image_paths:
+        image = torch.tensor(np.load(image_path)['arr_0'])
+        k = random.randint(0, 3)
+        image = torch.rot90(image, k, [2, 3])
+        images.append(image)
+    images = torch.stack(images)
+    return images.to(device), batch_data['label'].to(device)
 
 def fft_transform2(batch_data, device):
-    image_path = batch_data['image'][0]
-    image = torch.tensor(np.load(image_path)['arr_0'])
-    return image.to(device), batch_data['label'].to(device)
+    image_paths = batch_data['image']
+    images = []
+    for image_path in image_paths:
+        image = torch.tensor(np.load(image_path)['arr_0'])
+        images.append(image)
+    images = torch.stack(images)
+    return images.to(device), batch_data['label'].to(device)
 
 def train_epoch(model, loader, optimizer, scaler, epoch, args):
     """One train epoch over the dataset"""
@@ -488,7 +496,7 @@ def parse_args():
     parser.add_argument("--logdir", default='weights/', help="path to log directory to store Tensorboard logs")
 
     parser.add_argument("--epochs", "--max_epochs", default=300, type=int, help="number of training epochs")
-    parser.add_argument("--batch_size", default=1, type=int, help="batch size, the number of WSI images per gpu")
+    parser.add_argument("--batch_size", default=4, type=int, help="batch size, the number of WSI images per gpu")
     parser.add_argument("--optim_lr", default=3e-5, type=float, help="initial learning rate")
 
     parser.add_argument("--weight_decay", default=0, type=float, help="optimizer weight decay")
@@ -511,7 +519,7 @@ def parse_args():
     )
     parser.add_argument("--dist-backend", default="nccl", type=str, help="distributed backend")
 
-    parser.add_argument("--quick", default=False, action="store_true", help="use a small subset of data for debugging")
+    parser.add_argument("--quick", default=True, action="store_true", help="use a small subset of data for debugging")
 
     args = parser.parse_args()
 

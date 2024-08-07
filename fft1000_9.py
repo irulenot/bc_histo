@@ -467,7 +467,7 @@ def main_worker(gpu, args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Multiple Instance Learning (MIL) example of classification from WSI.")
     parser.add_argument(
-        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT1000_WSI_both_centered/", help="path to root folder of images"
+        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT1000g_WSI_both_centered/", help="path to root folder of images"
     )
     parser.add_argument("--dataset_json", default=None, type=str, help="path to dataset json file")
 
