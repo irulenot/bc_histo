@@ -62,12 +62,6 @@ def fft_transform(batch_data, device):
     image = torch.tensor(np.load(image_path)['arr_0'])
     k = random.randint(0, 3)
     image = torch.rot90(image, k, [2, 3])
-    d = random.uniform(0, 1)
-    if d <= 0.5:
-        s = random.uniform(0.001, 1)
-    else:
-        s = random.uniform(1, 10)
-    image = image * s
     return image.to(device), batch_data['label'].to(device)
 
 def fft_transform2(batch_data, device):
@@ -351,7 +345,7 @@ def main_worker(gpu, args):
     # if args.rank == 1:
     #     print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
    
-    model = arch1000()
+    model = arch1000_3()
 
     best_acc = 0
     start_epoch = 0
