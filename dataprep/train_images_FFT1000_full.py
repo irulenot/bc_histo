@@ -18,6 +18,8 @@ import torch
 import gzip
 import shutil
 import torch.nn.functional as F
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '3'
 
 input_dir = '/data/breast-cancer/PANDA/train_images/'
 output_dir = '/data/breast-cancer/PANDA/train_images_FFT1000/'

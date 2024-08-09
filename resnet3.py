@@ -179,6 +179,30 @@ class ResNet(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
+        self.proj_mag_high = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=16, kernel_size=1, stride=1),
+        )
+        self.proj_mag_low = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=16, kernel_size=1, stride=1),
+        )
+        self.proj_phase_high = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=16, kernel_size=1, stride=1),
+        )
+        self.proj_phase_low = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=16, kernel_size=1, stride=1),
+        )
+
+        self.proj_fuse_high = nn.Sequential(
+            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=1, stride=1),
+        )
+        self.proj_fuse_low = nn.Sequential(
+            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=1, stride=1),
+        )
+
+        self.proj_fuse = nn.Sequential(
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=1, stride=1),
+        )
+
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
@@ -238,17 +262,20 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def _forward_impl(self, x: Tensor) -> Tensor:
-        x1 = torch.abs(x[0])
-        x2 = torch.abs(x[1])
-        x3 = torch.angle(x[0])
-        x4 = torch.angle(x[1]) # 3x1000x1000
+        x1 = torch.abs(x[0]).unsqueeze(0)
+        x2 = torch.abs(x[1]).unsqueeze(0)
+        x3 = torch.angle(x[0]).unsqueeze(0)
+        x4 = torch.angle(x[1]).unsqueeze(0) # 3x1000x1000
 
-        x = torch.cat([x1,x2,x3,x4], dim=0).unsqueeze(0)
-        # See note [TorchScript super()]
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
+        x1 = self.proj_mag_high(x1)
+        x2 = self.proj_mag_low(x2)
+        x3 = self.proj_phase_high(x3)
+        x4 = self.proj_phase_low(x4)
+
+        x1, x2 = x1 * x3, x2 * x4
+        x1, x2 = self.proj_fuse_high(x1), self.proj_fuse_low(x2)
+        x = x1 * x2
+        x = self.proj_fuse(x)
 
         x = self.layer1(x)
         x = self.layer2(x)

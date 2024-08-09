@@ -165,6 +165,7 @@ class ProjBlock(nn.Module):
         x = self.dropout(x)
         return x
 
+# 1000 but on small subset
 class arch1000(nn.Module):
 
     def __init__(self):
@@ -266,6 +267,7 @@ class arch1000(nn.Module):
         x = self.down(x)
         return self.head(x.view(x.size(0), -1))
     
+# 1000
 class arch1000_04(nn.Module):
 
     def __init__(self):
@@ -426,167 +428,7 @@ class arch1000_04(nn.Module):
 
         return self.head(x.view(x.size(0), -1))
 
-class arch1000_05(nn.Module):
-
-    def __init__(self):
-        super(arch1000_05, self).__init__()
-
-        self.proj_mag_high = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=1, stride=1),
-        )
-        self.proj_mag_low = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=1, stride=1),
-        )
-        self.proj_phase_high = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=1, stride=1),
-        )
-        self.proj_phase_low = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=1, stride=1),
-        )
-
-        self.proj_fuse_high = nn.Sequential(
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=1, stride=1),
-        )
-        self.proj_fuse_low = nn.Sequential(
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=1, stride=1),
-        )
-
-        self.proj_fuse = nn.Sequential(
-            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=1, stride=1),
-        )
-        
-        self.fuse1 = nn.Sequential(
-            nn.Conv2d(in_channels=128, out_channels=64, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(64),
-            nn.PReLU(),
-        )
-        self.fuse11 = nn.Sequential(
-            nn.Conv2d(in_channels=128, out_channels=64, kernel_size=5, stride=2, padding=2),
-            nn.BatchNorm2d(64),
-            nn.PReLU(),
-        )
-        self.fuse111 = nn.Sequential(
-            nn.Conv2d(in_channels=128, out_channels=64, kernel_size=7, stride=2, padding=3),
-            nn.BatchNorm2d(64),
-            nn.PReLU(),
-        )
-        self.fuse2 = nn.Sequential(
-            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(32),
-            nn.PReLU(),
-        )
-        self.fuse22 = nn.Sequential(
-            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=5, stride=2, padding=2),
-            nn.BatchNorm2d(32),
-            nn.PReLU(),
-        )
-        self.fuse222 = nn.Sequential(
-            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=7, stride=2, padding=3),
-            nn.BatchNorm2d(32),
-            nn.PReLU(),
-        )
-        self.fuse3 = nn.Sequential(
-            nn.Conv2d(in_channels=32, out_channels=16, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(16),
-            nn.PReLU(),
-        )
-        self.fuse33 = nn.Sequential(
-            nn.Conv2d(in_channels=32, out_channels=16, kernel_size=5, stride=2, padding=2),
-            nn.BatchNorm2d(16),
-            nn.PReLU(),
-        )
-        self.fuse333 = nn.Sequential(
-            nn.Conv2d(in_channels=32, out_channels=16, kernel_size=7, stride=2, padding=3),
-            nn.BatchNorm2d(16),
-            nn.PReLU(),
-        )
-        self.fuse4 = nn.Sequential(
-            nn.Conv2d(in_channels=16, out_channels=8, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(8),
-            nn.PReLU(),
-        )
-        self.fuse44 = nn.Sequential(
-            nn.Conv2d(in_channels=16, out_channels=8, kernel_size=5, stride=2, padding=2),
-            nn.BatchNorm2d(8),
-            nn.PReLU(),
-        )
-        self.fuse444 = nn.Sequential(
-            nn.Conv2d(in_channels=16, out_channels=8, kernel_size=7, stride=2, padding=3),
-            nn.BatchNorm2d(8),
-            nn.PReLU(),
-        )
-        self.fuse5 = nn.Sequential(
-            nn.Conv2d(in_channels=8, out_channels=4, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(4),
-            nn.PReLU(),
-        )
-        self.fuse55 = nn.Sequential(
-            nn.Conv2d(in_channels=8, out_channels=4, kernel_size=5, stride=2, padding=2),
-            nn.BatchNorm2d(4),
-            nn.PReLU(),
-        )
-        self.fuse555 = nn.Sequential(
-            nn.Conv2d(in_channels=8, out_channels=4, kernel_size=7, stride=2, padding=3),
-            nn.BatchNorm2d(4),
-            nn.PReLU(),
-        )
-        self.fuse6 = nn.Sequential(
-            nn.Conv2d(in_channels=4, out_channels=2, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(2),
-            nn.PReLU(),
-        )
-        self.fuse66 = nn.Sequential(
-            nn.Conv2d(in_channels=4, out_channels=2, kernel_size=5, stride=2, padding=2),
-            nn.BatchNorm2d(2),
-            nn.PReLU(),
-        )
-        self.fuse666 = nn.Sequential(
-            nn.Conv2d(in_channels=4, out_channels=2, kernel_size=7, stride=2, padding=3),
-            nn.BatchNorm2d(2),
-            nn.PReLU(),
-        )
-
-        self.head = nn.Sequential(
-            nn.Linear(512, 256),
-            nn.LayerNorm(256),
-            nn.PReLU(),
-            nn.Linear(256, 128),
-            nn.LayerNorm(128),
-            nn.PReLU(),
-            nn.Linear(128, 64),
-            nn.LayerNorm(64),
-            nn.PReLU(),
-            nn.Linear(64, 32),
-            nn.LayerNorm(32),
-            nn.PReLU(),
-            nn.Linear(32, 5),
-        )
-
-    def forward(self, x):
-        x1 = torch.abs(x[0]).unsqueeze(0)
-        x2 = torch.abs(x[1]).unsqueeze(0)
-        x3 = torch.angle(x[0]).unsqueeze(0)
-        x4 = torch.angle(x[1]).unsqueeze(0) # 3x1000x1000
-
-        x1 = self.proj_mag_high(x1)
-        x2 = self.proj_mag_low(x2)
-        x3 = self.proj_phase_high(x3)
-        x4 = self.proj_phase_low(x4)
-
-        x1, x2 = x1 * x3, x2 * x4
-        x1, x2 = self.proj_fuse_high(x1), self.proj_fuse_low(x2)
-        x = x1 * x2
-        x = self.proj_fuse(x)
-        x1, x2, x3 = self.fuse1(x), self.fuse11(x), self.fuse111(x)
-        x1, x2, x3 = self.fuse2(x1), self.fuse22(x2), self.fuse222(x3)
-        x1, x2, x3 = self.fuse3(x1), self.fuse33(x2), self.fuse333(x3)
-        x1, x2, x3 = self.fuse4(x1), self.fuse44(x2), self.fuse444(x3)
-        x1, x2, x3 = self.fuse5(x1), self.fuse55(x2), self.fuse555(x3)
-        x1, x2, x3 = self.fuse6(x1), self.fuse66(x2), self.fuse666(x3)
-        x = x1 + x2 + x3
-
-        return self.head(x.view(x.size(0), -1))
-
+# 2000
 class arch2000_08(nn.Module):
 
     def __init__(self):
@@ -752,3 +594,4 @@ class arch2000_08(nn.Module):
         x = self.fuse6(x) + self.fuse66(x) + self.fuse666(x)
 
         return self.head(x.view(x.size(0), -1))
+

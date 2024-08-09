@@ -18,9 +18,13 @@ import torch
 import gzip
 import shutil
 import torch.nn.functional as F
+import torchvision.transforms as transforms
+import concurrent.futures
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '3'
 
 input_dir = '/data/breast-cancer/PANDA/train_images/'
-output_dir = '/data/breast-cancer/PANDA/train_images_FFT1000c_WSI_both_centered/'
+output_dir = '/data/breast-cancer/PANDA/train_images_FFT2000g/'
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
@@ -36,22 +40,23 @@ def process_tiff(tiff_file):
     if image.shape[1] > 50000 or image.shape[2] > 50000:
         return 0
 
+    transform = transforms.Grayscale(num_output_channels=1)
+    image = transform(image)
+
     fft_img = torch.fft.fft2(image)
     fft_img2 = torch.fft.fftshift(fft_img)
 
-    crop_size = 1000
+    crop_size = 2000
     h, w = fft_img.shape[-2], fft_img.shape[-1]
     start_h, start_w = h // 2 - crop_size // 2, w // 2 - crop_size // 2
     
     fft_img = fft_img[:, start_h:start_h+crop_size, start_w:start_w+crop_size]
     fft_img2 = fft_img2[:, start_h:start_h+crop_size, start_w:start_w+crop_size]
-    if fft_img.shape[0] != 3 or fft_img.shape[1] != crop_size or fft_img.shape[2] != crop_size:
+    if fft_img.shape[0] != 1 or fft_img.shape[1] != crop_size or fft_img.shape[2] != crop_size:
         return
 
     fft_img = torch.stack([fft_img, fft_img2])
     np.savez_compressed(f'{output_file}', fft_img.numpy())
-    cond = np.array((image.shape[1], image.shape[2]))
-    np.savez_compressed(f'{output_file}_cond', cond)
     return output_file
 
 
@@ -72,8 +77,10 @@ for filename in new_file_names:
             highest_index = index
 tiff_files = tiff_files[highest_index:]
 
-for tiff_file in tqdm(tiff_files):
-    result = process_tiff(tiff_file)
+# Using ProcessPoolExecutor to process files in parallel
+with concurrent.futures.ProcessPoolExecutor(max_workers=3) as executor:
+    # Wrap the map with tqdm for progress tracking
+    results = list(tqdm(executor.map(process_tiff, tiff_files), total=len(tiff_files)))
 
 
 # import torch

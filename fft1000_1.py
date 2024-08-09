@@ -345,7 +345,7 @@ def main_worker(gpu, args):
     # if args.rank == 1:
     #     print("Dataset training:", len(dataset_train), "validation:", len(dataset_valid))
    
-    model = arch1000_1()
+    model = arch3000_1()
 
     best_acc = 0
     start_epoch = 0
@@ -467,7 +467,7 @@ def main_worker(gpu, args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Multiple Instance Learning (MIL) example of classification from WSI.")
     parser.add_argument(
-        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT1000_WSI_both_centered/", help="path to root folder of images"
+        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT3000g_WSI_both_centered/", help="path to root folder of images"
     )
     parser.add_argument("--dataset_json", default=None, type=str, help="path to dataset json file")
 
@@ -511,7 +511,7 @@ def parse_args():
     )
     parser.add_argument("--dist-backend", default="nccl", type=str, help="distributed backend")
 
-    parser.add_argument("--quick", default=False, action="store_true", help="use a small subset of data for debugging")
+    parser.add_argument("--quick", default=True, action="store_true", help="use a small subset of data for debugging")
 
     args = parser.parse_args()
 

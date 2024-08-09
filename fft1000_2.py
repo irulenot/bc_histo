@@ -467,7 +467,7 @@ def main_worker(gpu, args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Multiple Instance Learning (MIL) example of classification from WSI.")
     parser.add_argument(
-        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT1000_WSI_both_centered/", help="path to root folder of images"
+        "--data_root", default="/data/breast-cancer/PANDA/train_images_FFT1000/", help="path to root folder of images"
     )
     parser.add_argument("--dataset_json", default=None, type=str, help="path to dataset json file")
 
@@ -505,7 +505,7 @@ def parse_args():
     # for multigpu
     parser.add_argument("--distributed", default=False, action="store_true", help="use multigpu training, recommended")
     parser.add_argument("--world_size", default=1, type=int, help="number of nodes for distributed training")
-    parser.add_argument("--rank", default=1, type=int, help="node rank for distributed training")
+    parser.add_argument("--rank", default=2, type=int, help="node rank for distributed training")
     parser.add_argument(
         "--dist-url", default="tcp://127.0.0.1:23456", type=str, help="url used to set up distributed training"
     )
@@ -530,9 +530,9 @@ if __name__ == "__main__":
         # download default json datalist
         resource = "https://drive.google.com/uc?id=1L6PtKBlHHyUgTE4rVhRuOLTQKgD4tBRK"
         if args.quick == True:
-            dst = "datalists/train_images_FFT1000_WSI_both_centered_quick.json"
+            dst = "datalists/train_images_FFT1000_quick.json"
         else:
-            dst = "datalists/train_images_FFT1000_WSI_both_centered.json"
+            dst = "datalists/train_images_FFT1000.json"
         # if not os.path.exists(dst):
         #     gdown.download(resource, dst, quiet=False)
         args.dataset_json = dst
@@ -550,4 +550,4 @@ if __name__ == "__main__":
         # print("Multigpu", ngpus_per_node, "rescaled lr", args.optim_lr)
         mp.spawn(main_worker, nprocs=ngpus_per_node, args=(args,))
     else:
-        main_worker(1, args)
+        main_worker(2, args)
